@@ -1,4 +1,4 @@
-"""Spike test: render a geekmagic-style 240x240 widget."""
+"""Render a smart-display-style 240x240 widget and benchmark it."""
 
 import base64
 import io

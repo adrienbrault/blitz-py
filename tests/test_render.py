@@ -226,6 +226,10 @@ class TestErrors:
         with pytest.raises(ValueError):
             blitz_py.render_png("<p>x</p>", width=10, height=10, background="notacolor")
 
+    def test_non_ascii_background(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_png("<p>x</p>", width=10, height=10, background="#€€€")
+
     def test_unknown_default_font_family(self):
         with pytest.raises(ValueError):
             blitz_py.render_png(

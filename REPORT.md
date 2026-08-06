@@ -58,7 +58,7 @@ HA's container has ~no fonts. Recommendation: **bundle one compact open font** (
 1. **Blitz is pre-1.0 and churns.** Beta APIs changed under us once already during the spike (`anyrender` 0.11→0.12 split). Mitigation: exact-pin in `Cargo.lock`, upgrade deliberately, keep the binding surface small (2 functions = small blast radius).
 2. **No `@font-face`, no external images** in the current design — by choice. Data URIs + `fonts=` cover the widget use case.
 3. **Rendering fidelity gaps** exist vs a real browser (Blitz's own README: capable but buggy). For self-authored widget HTML this is fine; for arbitrary web pages it's not a goal.
-4. **macOS 27 beta local-dev quirk** (not a product risk): the current beta's dyld requires 8-byte-aligned LINKEDIT string pools; today's Rust/Xcode linkers emit 4-aligned ones for *any* large dylib, so locally-built modules need a 30-line post-link realign script (in `scratchpad/align_strpool.py`, works). CI wheels built on stable runners are unaffected; upstream will fix before the OS GAs. Also: uv's python-build-standalone 3.12 crashes loading *any* pyo3 module on this beta — use Homebrew Python locally.
+4. **macOS 27 beta local-dev quirk** (not a product risk): the current beta's dyld requires 8-byte-aligned LINKEDIT string pools; today's Rust/Xcode linkers emit 4-aligned ones for *any* large dylib, so locally-built modules need a small post-link realign script ([tools/align_strpool.py](tools/align_strpool.py), works). CI wheels built on stable runners are unaffected; upstream will fix before the OS GAs. Also: uv's python-build-standalone 3.12 crashes loading *any* pyo3 module on this beta — use Homebrew Python locally.
 
 ## Suggested roadmap
 

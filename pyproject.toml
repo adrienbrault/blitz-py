@@ -8,12 +8,23 @@ description = "Render HTML/CSS to images from Python, powered by the Blitz engin
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Adrien Brault", email = "adrien.brault@gmail.com" }]
 keywords = ["html", "css", "render", "screenshot", "blitz", "headless"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Text Processing :: Markup :: HTML",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/adrienbrault/blitz-py"
+Issues = "https://github.com/adrienbrault/blitz-py/issues"
 
 [tool.maturin]
 module-name = "blitz_py"

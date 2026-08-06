@@ -1,5 +1,8 @@
 # blitz-py
 
+[![CI](https://github.com/adrienbrault/blitz-py/actions/workflows/ci.yml/badge.svg)](https://github.com/adrienbrault/blitz-py/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/blitz-py)](https://pypi.org/project/blitz-py/)
+
 Render HTML/CSS to images from Python — no browser, no GPU, no JavaScript, no network.
 
 Powered by [Blitz](https://github.com/DioxusLabs/blitz), DioxusLabs' modular web engine: real CSS via [Stylo](https://github.com/servo/stylo) (Servo/Firefox's style engine), flexbox/grid layout via [Taffy](https://github.com/DioxusLabs/taffy), text shaping via [Parley](https://github.com/linebender/parley), and CPU rasterization via [vello_cpu](https://github.com/linebender/vello).
@@ -110,6 +113,8 @@ blitz_py.render_png(html, width=240, height=240,
 ```
 
 WOFF/WOFF2 sources are supported too. `local(...)` sources and format-less data URIs are currently skipped by the engine.
+
+Note on coverage: bundled Inter covers Latin scripts (plus Greek/Cyrillic). For CJK, Arabic, and other scripts on systems without suitable fonts, pass an appropriate font (e.g. a Noto variant) via `fonts=`.
 
 ### What's supported
 

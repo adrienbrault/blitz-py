@@ -40,7 +40,8 @@ impl NetProvider for SyncProvider {
                 handler.bytes(url.to_string(), Bytes::from(bytes));
             }
             "file" if self.allow_file_urls => {
-                if let Ok(contents) = std::fs::read(url.path()) {
+                let Ok(path) = url.to_file_path() else { return };
+                if let Ok(contents) = std::fs::read(path) {
                     handler.bytes(url.to_string(), Bytes::from(contents));
                 }
             }
@@ -63,6 +64,13 @@ fn parse_color_scheme(s: &str) -> PyResult<ColorScheme> {
 fn parse_background(s: Option<&str>) -> PyResult<Option<blitz_dom::util::Color>> {
     let Some(s) = s else { return Ok(None) };
     let hex = s.strip_prefix('#').unwrap_or(s);
+    if !hex.is_ascii() {
+        // Byte-offset slicing below requires ASCII; anything else is not a
+        // valid hex color anyway.
+        return Err(PyValueError::new_err(format!(
+            "background must be #rgb, #rrggbb or #rrggbbaa, got '{s}'"
+        )));
+    }
     let parse =
         |h: &str| u8::from_str_radix(h, 16).map_err(|_| PyValueError::new_err("invalid color"));
     let (r, g, b, a) = match hex.len() {
@@ -100,6 +108,8 @@ static DEFAULT_FONT: &[u8] = include_bytes!("../assets/InterVariable.ttf");
 /// Largest permitted physical output dimension. Guards against absurd
 /// allocations (a 100_000² canvas is a 40GB buffer).
 const MAX_DIM: u64 = 16_384;
+/// Largest permitted physical pixel count (256MB of RGBA).
+const MAX_PIXELS: u64 = 64_000_000;
 
 fn validate(width: u32, height: u32, scale: f32) -> PyResult<()> {
     if width == 0 || height == 0 {
@@ -113,6 +123,11 @@ fn validate(width: u32, height: u32, scale: f32) -> PyResult<()> {
     if pw == 0 || ph == 0 || pw > MAX_DIM || ph > MAX_DIM {
         return Err(PyValueError::new_err(format!(
             "physical output dimensions {pw}x{ph} outside supported range 1..={MAX_DIM}"
+        )));
+    }
+    if pw * ph > MAX_PIXELS {
+        return Err(PyValueError::new_err(format!(
+            "physical output {pw}x{ph} exceeds {MAX_PIXELS} pixels"
         )));
     }
     Ok(())
