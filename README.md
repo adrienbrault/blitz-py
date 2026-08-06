@@ -71,18 +71,21 @@ CSS animations are evaluated on a deterministic clock: `render_frames` renders t
 ```python
 from PIL import Image
 
-fps, seconds = 20, 3.2
+fps, seconds = 12, 3.2
 w, h, frames = blitz_py.render_frames(
     html, width=240, height=240,
     times=[i / fps for i in range(int(fps * seconds))],
 )
-imgs = [Image.frombytes("RGBA", (w, h), f).convert("RGB")
-        .convert("P", palette=Image.ADAPTIVE) for f in frames]
+rgbs = [Image.frombytes("RGBA", (w, h), f).convert("RGB") for f in frames]
+base = rgbs[0].quantize(colors=64, dither=Image.Dither.NONE)
+imgs = [im.quantize(colors=64, palette=base, dither=Image.Dither.NONE) for im in rgbs]
 imgs[0].save("widget.gif", save_all=True, append_images=imgs[1:],
-             duration=int(1000 / fps), loop=0)
+             duration=int(1000 / fps), loop=0, optimize=True)
 ```
 
 Anything `@keyframes` can express — transforms, opacity, colors — loops perfectly because you control the clock. See [examples/animated_widget.py](examples/animated_widget.py).
+
+File-size tips (a 3.2s 240×240 widget loop, measured): one **shared palette** across frames and **no dithering** matter most — both per-frame palettes and dither noise defeat GIF's delta/LZW compression. Naive 20fps/256-color/dithered ≈ 163KB; 20fps/64-color shared/no-dither ≈ 26KB; 12fps ≈ 18KB; 8fps/32 colors ≈ 11KB. Flat-color UI animation quantizes to 64 colors with no visible loss; gradients are what eat palette entries.
 
 ## API
 
