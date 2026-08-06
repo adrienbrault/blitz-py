@@ -11,12 +11,16 @@ A 240×240 widget renders in ~1.5ms warm on an M-series Mac (~40ms for the first
 
 ## What it looks like
 
-| Smart-display widget | Bootstrap 5.3 | Tailwind v4 |
-|:---:|:---:|:---:|
-| ![widget](docs/samples/sample_widget.png) | ![bootstrap](docs/samples/sample_bootstrap.png) | ![tailwind](docs/samples/sample_tailwind.png) |
-| hand-written CSS, flexbox + gradients | real `bootstrap.min.css`, inlined | real Tailwind v4 build output, inlined |
+![tailwind dashboard](docs/samples/sample_tailwind.png)
 
-All three are unedited `render_png` output (2× scale). Generation code: [examples/widget.py](examples/widget.py) and the snippets below.
+A full dashboard — CSS grid, flexbox, inline-SVG sparkline, stat tiles, meters — from real Tailwind v4 build output ([source](examples/tailwind_dashboard.html)).
+
+| Smart-display widget | Bootstrap 5.3 |
+|:---:|:---:|
+| ![widget](docs/samples/sample_widget.png) | ![bootstrap](docs/samples/sample_bootstrap.png) |
+| hand-written CSS, flexbox + gradients | real `bootstrap.min.css`, inlined |
+
+All samples are unedited `render_png` output (2× scale). Generation code: [examples/widget.py](examples/widget.py) and the snippets below.
 
 ## Install
 
