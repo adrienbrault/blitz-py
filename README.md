@@ -70,7 +70,7 @@ Image.frombytes("RGBA", (w, h), rgba).convert("RGB").save("out.jpg", quality=90)
   <img src="docs/samples/sample_animation.gif" width="560" alt="Animated dashboard: radar sweep, equalizer bars, deploy progress, typewriter terminal — pure CSS keyframes">
 </p>
 
-Everything above is Tailwind classes + CSS `@keyframes` ([source](examples/mission_control.html)): a rotating conic-gradient radar sweep with timed blips, staggered equalizer bars, an indeterminate progress sweep, and a `steps()`-driven typewriter — 48 frames rendered in ~250ms.
+Everything above is Tailwind classes + CSS `@keyframes` ([source](examples/mission_control.html)): satellites on different orbital periods, a live-scrolling traffic chart (a periodic series drawn two cycles wide, translated one cycle per loop — new data appears to stream in), an indeterminate progress sweep, and a `steps()`-driven typewriter — 48 frames rendered in ~220ms, seamless 4s loop.
 
 CSS animations are evaluated on a deterministic clock: `render_frames` renders the document at any list of timestamps (seconds), and Pillow assembles the GIF. Frames after the first reuse the parsed document, so they're fast — ~1ms per 240×240 frame:
 
@@ -173,6 +173,9 @@ Measured on an M-series Mac (arm64), each scenario in a fresh process, release b
 | Bootstrap 5.3 card (233KB CSS) | 880×720 | 37ms | **7.0ms** | 58MB |
 | Tailwind v4 dashboard (the gallery image) | 1520×1328 | 63ms | **18ms** | 62MB |
 | Long article | 800×4000 | 48ms | **13ms** | 69MB |
+| Animated GIF: widget, 38 frames | 240×240×38 | 53ms total | **1.4ms**/frame | 77MB |
+
+GIF encoding on top of rendering (Pillow quantize + LZW, 38 frames): ~60ms, 18KB output.
 
 The first render pays a one-time system-font scan; after that the font collection is cached and cloned per render. Importing the module adds ~1MB RSS; memory stays flat under sustained rendering (no per-render growth — verified over 1000+ renders). On an Alpine/arm64 container the warm widget render measures ~0.8ms.
 

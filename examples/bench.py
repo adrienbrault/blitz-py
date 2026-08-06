@@ -95,8 +95,53 @@ def scenario(name: str) -> tuple[str, int, int, float, str | None]:
     raise SystemExit(f"unknown scenario {name}")
 
 
+def run_gif(name: str) -> None:
+    """Animated widget -> frames -> Pillow GIF, timing render and encode."""
+    import io
+
+    import blitz_py
+    from PIL import Image
+
+    html = (HERE / "animated_widget.py").read_text().split('HTML = """')[1].split('"""')[0]
+    fps, seconds = 12, 3.2
+    times = [i / fps for i in range(int(fps * seconds))]
+
+    t0 = time.perf_counter()
+    w, h, frames = blitz_py.render_frames(html, width=240, height=240, times=times)
+    t_render = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    rgbs = [Image.frombytes("RGBA", (w, h), f).convert("RGB") for f in frames]
+    base = rgbs[0].quantize(colors=64, dither=Image.Dither.NONE)
+    imgs = [im.quantize(colors=64, palette=base, dither=Image.Dither.NONE) for im in rgbs]
+    buf = io.BytesIO()
+    imgs[0].save(buf, format="GIF", save_all=True, append_images=imgs[1:],
+                 duration=int(1000 / fps), loop=0, optimize=True)
+    t_encode = time.perf_counter() - t0
+
+    rss_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform != "darwin":
+        rss_peak *= 1024
+    print(
+        json.dumps(
+            {
+                "scenario": name,
+                "px": f"{w}x{h} x{len(frames)} frames",
+                "cold_ms": round(t_render * 1000, 1),
+                "warm_ms": round(t_render / len(frames) * 1000, 2),
+                "encode_ms": round(t_encode * 1000, 1),
+                "png_kb": round(len(buf.getvalue()) / 1024, 1),
+                "rss_peak_after_200_mb": round(rss_peak / 1e6, 1),
+            }
+        )
+    )
+
+
 def run_one(name: str) -> None:
     import blitz_py
+
+    if name == "gif":
+        return run_gif(name)
 
     html, w, h, scale, bg = scenario(name)
 
@@ -130,7 +175,7 @@ def run_one(name: str) -> None:
     )
 
 
-ALL = ["tiny", "widget", "bootstrap", "tailwind", "article"]
+ALL = ["tiny", "widget", "bootstrap", "tailwind", "article", "gif"]
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

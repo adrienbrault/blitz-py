@@ -1,5 +1,7 @@
 <!-- Tailwind v4 + CSS keyframes animation showcase. Every animation period divides
-     the 4s loop, so the GIF loops seamlessly. Render with:
+     the 4s loop, so the GIF loops seamlessly. The live-traffic chart is a smooth
+     bezier of a periodic series, drawn two cycles wide and scrolled one cycle per
+     loop. Render with:
 
        w, h, frames = blitz_py.render_frames(html, width=560, height=310, scale=1.5,
                                              background="#0b1120",
@@ -22,7 +24,6 @@
     --color-sky-300: oklch(82.8% 0.111 230.318);
     --color-sky-400: oklch(74.6% 0.16 232.661);
     --color-sky-500: oklch(68.5% 0.169 237.323);
-    --color-sky-600: oklch(58.8% 0.158 241.966);
     --color-blue-500: oklch(62.3% 0.214 259.815);
     --color-blue-600: oklch(54.6% 0.245 262.881);
     --color-violet-400: oklch(70.2% 0.183 293.541);
@@ -224,17 +225,38 @@
   .inset-0 {
     inset: 0px;
   }
-  .inset-3 {
-    inset: calc(var(--spacing) * 3);
+  .inset-4 {
+    inset: calc(var(--spacing) * 4);
   }
   .inset-8 {
     inset: calc(var(--spacing) * 8);
   }
+  .-top-1 {
+    top: calc(var(--spacing) * -1);
+  }
   .-top-16 {
     top: calc(var(--spacing) * -16);
   }
+  .top-0 {
+    top: 0px;
+  }
+  .top-1\/2 {
+    top: calc(1 / 2 * 100%);
+  }
+  .-right-1 {
+    right: calc(var(--spacing) * -1);
+  }
   .-right-16 {
     right: calc(var(--spacing) * -16);
+  }
+  .-bottom-1 {
+    bottom: calc(var(--spacing) * -1);
+  }
+  .left-0 {
+    left: 0px;
+  }
+  .left-1\/2 {
+    left: calc(1 / 2 * 100%);
   }
   .col-span-2 {
     grid-column: span 2 / span 2;
@@ -244,6 +266,15 @@
   }
   .mx-auto {
     margin-inline: auto;
+  }
+  .-mt-1 {
+    margin-top: calc(var(--spacing) * -1);
+  }
+  .-mt-6 {
+    margin-top: calc(var(--spacing) * -6);
+  }
+  .-mt-\[7px\] {
+    margin-top: calc(7px * -1);
   }
   .mt-1 {
     margin-top: var(--spacing);
@@ -260,8 +291,17 @@
   .mt-5 {
     margin-top: calc(var(--spacing) * 5);
   }
+  .-ml-0\.5 {
+    margin-left: calc(var(--spacing) * -0.5);
+  }
   .-ml-1 {
     margin-left: calc(var(--spacing) * -1);
+  }
+  .-ml-6 {
+    margin-left: calc(var(--spacing) * -6);
+  }
+  .-ml-\[7px\] {
+    margin-left: calc(7px * -1);
   }
   .flex {
     display: flex;
@@ -284,6 +324,9 @@
   .h-2 {
     height: calc(var(--spacing) * 2);
   }
+  .h-3\.5 {
+    height: calc(var(--spacing) * 3.5);
+  }
   .h-4 {
     height: calc(var(--spacing) * 4);
   }
@@ -295,6 +338,12 @@
   }
   .h-10 {
     height: calc(var(--spacing) * 10);
+  }
+  .h-12 {
+    height: calc(var(--spacing) * 12);
+  }
+  .h-20 {
+    height: calc(var(--spacing) * 20);
   }
   .h-24 {
     height: calc(var(--spacing) * 24);
@@ -332,8 +381,8 @@
   .w-2\/5 {
     width: calc(2 / 5 * 100%);
   }
-  .w-3 {
-    width: calc(var(--spacing) * 3);
+  .w-3\.5 {
+    width: calc(var(--spacing) * 3.5);
   }
   .w-4 {
     width: calc(var(--spacing) * 4);
@@ -368,6 +417,9 @@
   .w-48 {
     width: calc(var(--spacing) * 48);
   }
+  .w-\[200\%\] {
+    width: 200%;
+  }
   .w-full {
     width: 100%;
   }
@@ -379,9 +431,6 @@
   }
   .shrink-0 {
     flex-shrink: 0;
-  }
-  .origin-bottom {
-    transform-origin: bottom;
   }
   .rotate-3 {
     rotate: 3deg;
@@ -404,29 +453,20 @@
   .animate-\[blip_1s_linear_infinite\] {
     animation: blip 1s linear infinite;
   }
-  .animate-\[blip_4s_ease-out_0s_infinite\] {
-    animation: blip 4s ease-out 0s infinite;
+  .animate-\[blip_2s_ease-out_infinite\] {
+    animation: blip 2s ease-out infinite;
   }
-  .animate-\[blip_4s_ease-out_1\.3s_infinite\] {
-    animation: blip 4s ease-out 1.3s infinite;
+  .animate-\[scroll_4s_linear_infinite\] {
+    animation: scroll 4s linear infinite;
   }
-  .animate-\[blip_4s_ease-out_2\.6s_infinite\] {
-    animation: blip 4s ease-out 2.6s infinite;
-  }
-  .animate-\[eq_1s_ease-in-out_0\.0s_infinite\] {
-    animation: eq 1s ease-in-out 0.0s infinite;
-  }
-  .animate-\[eq_1s_ease-in-out_0\.5s_infinite\] {
-    animation: eq 1s ease-in-out 0.5s infinite;
-  }
-  .animate-\[eq_1s_ease-in-out_0\.25s_infinite\] {
-    animation: eq 1s ease-in-out 0.25s infinite;
-  }
-  .animate-\[eq_1s_ease-in-out_0\.75s_infinite\] {
-    animation: eq 1s ease-in-out 0.75s infinite;
+  .animate-\[spin_1\.333s_linear_infinite\] {
+    animation: spin 1.333s linear infinite;
   }
   .animate-\[spin_1s_linear_infinite\] {
     animation: spin 1s linear infinite;
+  }
+  .animate-\[spin_2s_linear_infinite\] {
+    animation: spin 2s linear infinite;
   }
   .animate-\[spin_4s_linear_infinite\] {
     animation: spin 4s linear infinite;
@@ -551,6 +591,30 @@
     --tw-border-style: dashed;
     border-style: dashed;
   }
+  .border-sky-300\/40 {
+    border-color: color-mix(in srgb, oklch(82.8% 0.111 230.318) 40%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-sky-300) 40%, transparent);
+    }
+  }
+  .border-sky-400\/15 {
+    border-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 15%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-sky-400) 15%, transparent);
+    }
+  }
+  .border-sky-400\/20 {
+    border-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 20%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-sky-400) 20%, transparent);
+    }
+  }
+  .border-sky-400\/25 {
+    border-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 25%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-sky-400) 25%, transparent);
+    }
+  }
   .border-sky-400\/40 {
     border-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 40%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -620,6 +684,9 @@
       background-color: color-mix(in oklab, var(--color-emerald-500) 15%, transparent);
     }
   }
+  .bg-sky-300 {
+    background-color: var(--color-sky-300);
+  }
   .bg-sky-400 {
     background-color: var(--color-sky-400);
   }
@@ -653,6 +720,9 @@
   .bg-slate-900 {
     background-color: var(--color-slate-900);
   }
+  .bg-violet-400 {
+    background-color: var(--color-violet-400);
+  }
   .bg-white\/5 {
     background-color: color-mix(in srgb, #fff 5%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -673,12 +743,12 @@
     --tw-gradient-position: to right in oklab;
     background-image: linear-gradient(var(--tw-gradient-stops));
   }
-  .bg-gradient-to-t {
-    --tw-gradient-position: to top in oklab;
-    background-image: linear-gradient(var(--tw-gradient-stops));
-  }
   .from-emerald-400 {
     --tw-gradient-from: var(--color-emerald-400);
+    --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
+  }
+  .from-sky-300 {
+    --tw-gradient-from: var(--color-sky-300);
     --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
   }
   .from-sky-400 {
@@ -687,10 +757,6 @@
   }
   .from-sky-500 {
     --tw-gradient-from: var(--color-sky-500);
-    --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
-  }
-  .from-sky-600 {
-    --tw-gradient-from: var(--color-sky-600);
     --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
   }
   .from-violet-400 {
@@ -708,10 +774,6 @@
   }
   .to-fuchsia-600 {
     --tw-gradient-to: var(--color-fuchsia-600);
-    --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
-  }
-  .to-sky-400 {
-    --tw-gradient-to: var(--color-sky-400);
     --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
   }
   .to-teal-600 {
@@ -764,9 +826,6 @@
   }
   .py-2\.5 {
     padding-block: calc(var(--spacing) * 2.5);
-  }
-  .pb-1 {
-    padding-bottom: var(--spacing);
   }
   .text-center {
     text-align: center;
@@ -895,6 +954,12 @@
       --tw-shadow-color: color-mix(in oklab, color-mix(in oklab, var(--color-blue-500) 40%, transparent) var(--tw-shadow-alpha), transparent);
     }
   }
+  .shadow-sky-400\/60 {
+    --tw-shadow-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 60%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      --tw-shadow-color: color-mix(in oklab, color-mix(in oklab, var(--color-sky-400) 60%, transparent) var(--tw-shadow-alpha), transparent);
+    }
+  }
   .shadow-sky-500\/20 {
     --tw-shadow-color: color-mix(in srgb, oklch(68.5% 0.169 237.323) 20%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -903,6 +968,9 @@
   }
   .ring-\[\#0b1120\] {
     --tw-ring-color: #0b1120;
+  }
+  .ring-\[\#131c31\] {
+    --tw-ring-color: #131c31;
   }
   .ring-amber-400\/20 {
     --tw-ring-color: color-mix(in srgb, oklch(82.8% 0.189 84.429) 20%, transparent);
@@ -922,24 +990,6 @@
       --tw-ring-color: color-mix(in oklab, var(--color-emerald-400) 25%, transparent);
     }
   }
-  .ring-sky-400\/15 {
-    --tw-ring-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 15%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      --tw-ring-color: color-mix(in oklab, var(--color-sky-400) 15%, transparent);
-    }
-  }
-  .ring-sky-400\/20 {
-    --tw-ring-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 20%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      --tw-ring-color: color-mix(in oklab, var(--color-sky-400) 20%, transparent);
-    }
-  }
-  .ring-sky-400\/30 {
-    --tw-ring-color: color-mix(in srgb, oklch(74.6% 0.16 232.661) 30%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      --tw-ring-color: color-mix(in oklab, var(--color-sky-400) 30%, transparent);
-    }
-  }
   .ring-white\/5 {
     --tw-ring-color: color-mix(in srgb, #fff 5%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -951,14 +1001,6 @@
     @supports (color: color-mix(in lab, red, red)) {
       --tw-ring-color: color-mix(in oklab, var(--color-white) 10%, transparent);
     }
-  }
-}
-@keyframes eq {
-  0%, 100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
   }
 }
 @keyframes sweep {
@@ -1000,6 +1042,91 @@
   100% {
     opacity: 0;
     transform: scale(1.6);
+  }
+}
+@keyframes scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes ride {
+  0.0% {
+    transform: translateY(28.6px);
+  }
+  4.17% {
+    transform: translateY(32.4px);
+  }
+  8.33% {
+    transform: translateY(13.4px);
+  }
+  12.5% {
+    transform: translateY(15.3px);
+  }
+  16.67% {
+    transform: translateY(20.0px);
+  }
+  20.83% {
+    transform: translateY(5.5px);
+  }
+  25.0% {
+    transform: translateY(11.0px);
+  }
+  29.17% {
+    transform: translateY(2.3px);
+  }
+  33.33% {
+    transform: translateY(18.4px);
+  }
+  37.5% {
+    transform: translateY(13.7px);
+  }
+  41.67% {
+    transform: translateY(31.0px);
+  }
+  45.83% {
+    transform: translateY(26.0px);
+  }
+  50.0% {
+    transform: translateY(27.8px);
+  }
+  54.17% {
+    transform: translateY(44.8px);
+  }
+  58.33% {
+    transform: translateY(42.2px);
+  }
+  62.5% {
+    transform: translateY(61.1px);
+  }
+  66.67% {
+    transform: translateY(53.2px);
+  }
+  70.83% {
+    transform: translateY(62.1px);
+  }
+  75.0% {
+    transform: translateY(51.0px);
+  }
+  79.17% {
+    transform: translateY(64.5px);
+  }
+  83.33% {
+    transform: translateY(55.6px);
+  }
+  87.5% {
+    transform: translateY(59.5px);
+  }
+  91.67% {
+    transform: translateY(43.0px);
+  }
+  95.83% {
+    transform: translateY(44.8px);
+  }
+  100.0% {
+    transform: translateY(28.6px);
   }
 }
 @property --tw-rotate-x {
@@ -1243,33 +1370,45 @@
   <div class="mt-4 grid grid-cols-3 gap-3">
 
     <div class="rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
-      <p class="text-[10px] font-medium uppercase tracking-widest text-slate-500">Radar</p>
-      <div class="relative mx-auto mt-2 h-28 w-28 overflow-hidden rounded-full ring-1 ring-sky-400/30">
-        <div class="absolute inset-3 rounded-full ring-1 ring-sky-400/20"></div>
-        <div class="absolute inset-8 rounded-full ring-1 ring-sky-400/15"></div>
-        <div class="absolute inset-0 animate-[spin_4s_linear_infinite]"
-             style="background: conic-gradient(from 0deg, rgba(56,189,248,0.5), rgba(56,189,248,0.08) 60deg, transparent 90deg)"></div>
-        <span class="absolute h-2 w-2 rounded-full bg-sky-400 animate-[blip_4s_ease-out_0s_infinite]" style="top:28%;left:62%"></span>
-        <span class="absolute h-2 w-2 rounded-full bg-emerald-400 animate-[blip_4s_ease-out_1.3s_infinite]" style="top:58%;left:30%"></span>
-        <span class="absolute h-2 w-2 rounded-full bg-amber-400 animate-[blip_4s_ease-out_2.6s_infinite]" style="top:40%;left:74%"></span>
-        
+      <p class="text-[10px] font-medium uppercase tracking-widest text-slate-500">Constellation</p>
+      <div class="relative mx-auto mt-2 h-28 w-28">
+        <div class="absolute inset-0 rounded-full border border-sky-400/25"></div>
+        <div class="absolute inset-4 rounded-full border border-sky-400/20"></div>
+        <div class="absolute inset-8 rounded-full border border-sky-400/15"></div>
+
+        <div class="absolute left-1/2 top-1/2 -ml-6 -mt-6 h-12 w-12 rounded-full border border-sky-300/40 animate-[blip_2s_ease-out_infinite]"></div>
+
+        <div class="absolute left-1/2 top-1/2 -ml-[7px] -mt-[7px] h-3.5 w-3.5 rounded-full bg-gradient-to-br from-sky-300 to-blue-600 shadow-lg shadow-sky-400/60"></div>
+
+        <div class="absolute inset-0 animate-[spin_4s_linear_infinite]">
+          <span class="absolute left-1/2 -top-1 -ml-1 h-2 w-2 rounded-full bg-sky-300 ring-2 ring-[#131c31]"></span>
+        </div>
+        <div class="absolute inset-4 animate-[spin_2s_linear_infinite]">
+          <span class="absolute top-1/2 -right-1 -mt-1 h-2 w-2 rounded-full bg-violet-400 ring-2 ring-[#131c31]"></span>
+        </div>
+        <div class="absolute inset-8 animate-[spin_1.333s_linear_infinite]">
+          <span class="absolute left-1/2 -bottom-1 -ml-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-[#131c31]"></span>
+        </div>
       </div>
     </div>
 
-    <div class="flex flex-col rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+    <div class="rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
       <div class="flex items-baseline justify-between">
-        <p class="text-[10px] font-medium uppercase tracking-widest text-slate-500">Throughput</p>
+        <p class="text-[10px] font-medium uppercase tracking-widest text-slate-500">Live traffic</p>
         <p class="text-[10px] tabular-nums text-slate-400">2.4 GB/s</p>
       </div>
-      <div class="mt-2 flex flex-1 items-end justify-center gap-1.5 pb-1">
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.0s_infinite]" style="height:55%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.25s_infinite]" style="height:80%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.5s_infinite]" style="height:40%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.75s_infinite]" style="height:95%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.0s_infinite]" style="height:65%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.25s_infinite]" style="height:85%"></div>
-        <div class="w-3 origin-bottom rounded-t bg-gradient-to-t from-sky-600 to-sky-400 animate-[eq_1s_ease-in-out_0.5s_infinite]" style="height:50%"></div>
-        
+      <div class="relative mt-4 h-20 overflow-hidden">
+        <div class="absolute top-0 left-0 h-full w-[200%] animate-[scroll_4s_linear_infinite]">
+          <svg viewBox="0 0 480 80" preserveAspectRatio="none" class="h-full w-full">
+            <defs><linearGradient id="lf" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#38bdf8" stop-opacity="0.3"/>
+              <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+            </linearGradient></defs>
+            <path d="M0.0,33.6 C3.3,31.5 6.7,39.9 10.0,37.4 C13.3,34.8 16.7,21.2 20.0,18.4 C23.3,15.6 26.7,19.2 30.0,20.3 C33.3,21.4 36.7,26.7 40.0,25.0 C43.3,23.4 46.7,12.0 50.0,10.5 C53.3,9.0 56.7,16.5 60.0,16.0 C63.3,15.5 66.7,6.0 70.0,7.3 C73.3,8.5 76.7,21.5 80.0,23.4 C83.3,25.3 86.7,16.6 90.0,18.7 C93.3,20.8 96.7,34.0 100.0,36.0 C103.3,38.0 106.7,31.5 110.0,31.0 C113.3,30.4 116.7,29.7 120.0,32.8 C123.3,35.9 126.7,47.4 130.0,49.8 C133.3,52.2 136.7,44.5 140.0,47.2 C143.3,49.9 146.7,64.3 150.0,66.1 C153.3,67.9 156.7,58.0 160.0,58.2 C163.3,58.3 166.7,67.5 170.0,67.1 C173.3,66.8 176.7,55.6 180.0,56.0 C183.3,56.4 186.7,68.8 190.0,69.5 C193.3,70.3 196.7,61.4 200.0,60.6 C203.3,59.7 206.7,66.6 210.0,64.5 C213.3,62.4 216.7,50.4 220.0,48.0 C223.3,45.6 226.7,52.2 230.0,49.8 C233.3,47.4 236.7,35.7 240.0,33.6 C243.3,31.5 246.7,39.9 250.0,37.4 C253.3,34.8 256.7,21.2 260.0,18.4 C263.3,15.6 266.7,19.2 270.0,20.3 C273.3,21.4 276.7,26.7 280.0,25.0 C283.3,23.4 286.7,12.0 290.0,10.5 C293.3,9.0 296.7,16.5 300.0,16.0 C303.3,15.5 306.7,6.0 310.0,7.3 C313.3,8.5 316.7,21.5 320.0,23.4 C323.3,25.3 326.7,16.6 330.0,18.7 C333.3,20.8 336.7,34.0 340.0,36.0 C343.3,38.0 346.7,31.5 350.0,31.0 C353.3,30.4 356.7,29.7 360.0,32.8 C363.3,35.9 366.7,47.4 370.0,49.8 C373.3,52.2 376.7,44.5 380.0,47.2 C383.3,49.9 386.7,64.3 390.0,66.1 C393.3,67.9 396.7,58.0 400.0,58.2 C403.3,58.3 406.7,67.5 410.0,67.1 C413.3,66.8 416.7,55.6 420.0,56.0 C423.3,56.4 426.7,68.8 430.0,69.5 C433.3,70.3 436.7,61.4 440.0,60.6 C443.3,59.7 446.7,66.6 450.0,64.5 C453.3,62.4 456.7,50.4 460.0,48.0 C463.3,45.6 466.7,52.2 470.0,49.8 C473.3,47.4 476.7,35.7 480.0,33.6 L480,80 L0,80 Z" fill="url(#lf)"/>
+            <path d="M0.0,33.6 C3.3,31.5 6.7,39.9 10.0,37.4 C13.3,34.8 16.7,21.2 20.0,18.4 C23.3,15.6 26.7,19.2 30.0,20.3 C33.3,21.4 36.7,26.7 40.0,25.0 C43.3,23.4 46.7,12.0 50.0,10.5 C53.3,9.0 56.7,16.5 60.0,16.0 C63.3,15.5 66.7,6.0 70.0,7.3 C73.3,8.5 76.7,21.5 80.0,23.4 C83.3,25.3 86.7,16.6 90.0,18.7 C93.3,20.8 96.7,34.0 100.0,36.0 C103.3,38.0 106.7,31.5 110.0,31.0 C113.3,30.4 116.7,29.7 120.0,32.8 C123.3,35.9 126.7,47.4 130.0,49.8 C133.3,52.2 136.7,44.5 140.0,47.2 C143.3,49.9 146.7,64.3 150.0,66.1 C153.3,67.9 156.7,58.0 160.0,58.2 C163.3,58.3 166.7,67.5 170.0,67.1 C173.3,66.8 176.7,55.6 180.0,56.0 C183.3,56.4 186.7,68.8 190.0,69.5 C193.3,70.3 196.7,61.4 200.0,60.6 C203.3,59.7 206.7,66.6 210.0,64.5 C213.3,62.4 216.7,50.4 220.0,48.0 C223.3,45.6 226.7,52.2 230.0,49.8 C233.3,47.4 236.7,35.7 240.0,33.6 C243.3,31.5 246.7,39.9 250.0,37.4 C253.3,34.8 256.7,21.2 260.0,18.4 C263.3,15.6 266.7,19.2 270.0,20.3 C273.3,21.4 276.7,26.7 280.0,25.0 C283.3,23.4 286.7,12.0 290.0,10.5 C293.3,9.0 296.7,16.5 300.0,16.0 C303.3,15.5 306.7,6.0 310.0,7.3 C313.3,8.5 316.7,21.5 320.0,23.4 C323.3,25.3 326.7,16.6 330.0,18.7 C333.3,20.8 336.7,34.0 340.0,36.0 C343.3,38.0 346.7,31.5 350.0,31.0 C353.3,30.4 356.7,29.7 360.0,32.8 C363.3,35.9 366.7,47.4 370.0,49.8 C373.3,52.2 376.7,44.5 380.0,47.2 C383.3,49.9 386.7,64.3 390.0,66.1 C393.3,67.9 396.7,58.0 400.0,58.2 C403.3,58.3 406.7,67.5 410.0,67.1 C413.3,66.8 416.7,55.6 420.0,56.0 C423.3,56.4 426.7,68.8 430.0,69.5 C433.3,70.3 436.7,61.4 440.0,60.6 C443.3,59.7 446.7,66.6 450.0,64.5 C453.3,62.4 456.7,50.4 460.0,48.0 C463.3,45.6 466.7,52.2 470.0,49.8 C473.3,47.4 476.7,35.7 480.0,33.6" fill="none" stroke="#38bdf8" stroke-width="2"
+                      stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+        </div>
       </div>
     </div>
 
