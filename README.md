@@ -7,7 +7,16 @@ Render HTML/CSS to images from Python — no browser, no GPU, no JavaScript, no 
 
 Powered by [Blitz](https://github.com/DioxusLabs/blitz), DioxusLabs' modular web engine: real CSS via [Stylo](https://github.com/servo/stylo) (Servo/Firefox's style engine), flexbox/grid layout via [Taffy](https://github.com/DioxusLabs/taffy), text shaping via [Parley](https://github.com/linebender/parley), and CPU rasterization via [vello_cpu](https://github.com/linebender/vello).
 
-A 240×240 widget renders in ~20ms on an M-series Mac. Output is deterministic and identical across platforms: the [Inter](https://rsms.me/inter/) font (SIL OFL 1.1) is bundled as the default face, so text renders the same on your laptop and in a fontless Alpine container.
+A 240×240 widget renders in ~1.5ms warm on an M-series Mac (~40ms for the first render). Output is deterministic and identical across platforms: the [Inter](https://rsms.me/inter/) font (SIL OFL 1.1) is bundled as the default face, so text renders the same on your laptop and in a fontless Alpine container.
+
+## What it looks like
+
+| Smart-display widget | Bootstrap 5.3 | Tailwind v4 |
+|:---:|:---:|:---:|
+| ![widget](docs/samples/sample_widget.png) | ![bootstrap](docs/samples/sample_bootstrap.png) | ![tailwind](docs/samples/sample_tailwind.png) |
+| hand-written CSS, flexbox + gradients | real `bootstrap.min.css`, inlined | real Tailwind v4 build output, inlined |
+
+All three are unedited `render_png` output (2× scale). Generation code: [examples/widget.py](examples/widget.py) and the snippets below.
 
 ## Install
 
@@ -119,6 +128,22 @@ Note on coverage: bundled Inter covers Latin scripts (plus Greek/Cyrillic). For 
 ### What's supported
 
 Modern CSS as implemented by Stylo/Taffy: flexbox, grid, gradients, border-radius, shadows, transforms, `calc()`, custom properties, media queries, SVG images, WOFF... No JavaScript, no `@font-face` fetching, no external resources. Blitz itself is pre-1.0: capable but not pixel-perfect against browsers.
+
+## Performance
+
+Measured on an M-series Mac (arm64), each scenario in a fresh process, release build:
+
+| Scenario | Output px | First render | Warm render | Peak RSS after 200 renders |
+|---|---|---:|---:|---:|
+| `<h1>Hello</h1>` | 200×100 | 45ms | **0.6ms** | 35MB |
+| 240×240 widget @2x (flex + gradients) | 480×480 | 41ms | **1.4ms** | 39MB |
+| Bootstrap 5.3 card (233KB CSS) | 880×720 | 52ms | **8.2ms** | 44MB |
+| Tailwind v4 page (built CSS) | 880×840 | 50ms | **9.0ms** | 41MB |
+| Long article | 800×4000 | 61ms | **17ms** | 65MB |
+
+The first render pays a one-time system-font scan; after that the font collection is cached and cloned per render. Importing the module adds ~1MB RSS; memory stays flat under sustained rendering (no per-render growth — verified over 1000+ renders). On an Alpine/arm64 container the warm widget render measures ~0.8ms.
+
+The GIL is released during rendering, so concurrent renders from Python threads scale and async event loops aren't blocked.
 
 ## Why not a headless browser?
 

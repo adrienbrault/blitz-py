@@ -4,7 +4,7 @@
 //! -> Parley (text shaping) -> blitz-paint -> vello_cpu (rasterize).
 //! Fully headless, no GPU, no network, no JavaScript.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -133,27 +133,64 @@ fn validate(width: u32, height: u32, scale: f32) -> PyResult<()> {
     Ok(())
 }
 
-fn set_default_family(font_ctx: &mut parley::FontContext, family: &str) -> bool {
+fn set_default_ids(
+    collection: &mut parley::fontique::Collection,
+    ids: &[parley::fontique::FamilyId],
+) {
     use parley::fontique::{FallbackKey, GenericFamily, Script};
-    let ids: Vec<_> = font_ctx.collection.family_id(family).into_iter().collect();
-    if ids.is_empty() {
-        return false;
-    }
     for generic in [
         GenericFamily::Serif,
         GenericFamily::SansSerif,
         GenericFamily::Monospace,
         GenericFamily::SystemUi,
     ] {
-        font_ctx
-            .collection
-            .set_generic_families(generic, ids.iter().copied());
+        collection.set_generic_families(generic, ids.iter().copied());
     }
     let latin: Script = "Latn".parse().expect("valid script tag");
-    font_ctx
-        .collection
-        .set_fallbacks(FallbackKey::new(latin, None), ids.iter().copied());
+    collection.set_fallbacks(FallbackKey::new(latin, None), ids.iter().copied());
+}
+
+fn set_default_family(collection: &mut parley::fontique::Collection, family: &str) -> bool {
+    let ids: Vec<_> = collection.family_id(family).into_iter().collect();
+    if ids.is_empty() {
+        return false;
+    }
+    set_default_ids(collection, &ids);
     true
+}
+
+/// A pristine font collection: system fonts discovered once, bundled Inter
+/// registered and set as the default. Cloned per render — constructing a
+/// fresh collection each render both repeats the system-font scan and leaks
+/// (~120KB/call in fontique 0.10's platform scan), which matters for
+/// long-running processes.
+fn base_collection() -> parley::fontique::Collection {
+    use parley::fontique::{Blob, Collection, CollectionOptions};
+    static BASE: OnceLock<Mutex<Collection>> = OnceLock::new();
+    BASE.get_or_init(|| {
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+            ..Default::default()
+        });
+        // Register under the explicit name "Inter" (the file's own family
+        // name is "Inter Variable") and wire the defaults by returned id —
+        // a name lookup here could silently match a system-installed Inter
+        // or nothing at all.
+        let registered = collection.register_fonts(
+            Blob::new(Arc::new(DEFAULT_FONT)),
+            Some(parley::fontique::FontInfoOverride {
+                family_name: Some("Inter"),
+                ..Default::default()
+            }),
+        );
+        let ids: Vec<_> = registered.iter().map(|(id, _)| *id).collect();
+        set_default_ids(&mut collection, &ids);
+        Mutex::new(collection)
+    })
+    .lock()
+    .expect("font collection lock poisoned")
+    .clone()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -169,27 +206,27 @@ fn render_impl(
     default_font_family: Option<String>,
     allow_file_urls: bool,
 ) -> PyResult<RenderResult> {
-    let mut font_ctx = parley::FontContext::new();
-
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
     // fonts where available.
-    let blob = parley::fontique::Blob::new(Arc::new(DEFAULT_FONT));
-    font_ctx.collection.register_fonts(blob, None);
-    set_default_family(&mut font_ctx, "Inter");
+    let mut collection = base_collection();
 
     for font in fonts {
         let blob = parley::fontique::Blob::new(Arc::new(font));
-        font_ctx.collection.register_fonts(blob, None);
+        collection.register_fonts(blob, None);
     }
     if let Some(family) = &default_font_family {
-        if !set_default_family(&mut font_ctx, family) {
+        if !set_default_family(&mut collection, family) {
             return Err(PyValueError::new_err(format!(
                 "default_font_family '{family}' not found among registered or system fonts"
             )));
         }
     }
+    let font_ctx = parley::FontContext {
+        collection,
+        source_cache: Default::default(),
+    };
 
     let physical_width = (width as f64 * scale as f64) as u32;
     let physical_height = (height as f64 * scale as f64) as u32;

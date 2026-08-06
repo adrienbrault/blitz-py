@@ -240,6 +240,36 @@ class TestErrors:
         png = blitz_py.render_png("<<<>>>\x00&&&<p", width=50, height=50)
         assert png_size(png) == (50, 50)
 
+    def test_bundled_family_always_available(self):
+        # The bundled font is registered under the explicit name "Inter"
+        # regardless of what fonts the system has.
+        png = blitz_py.render_png(
+            "<p>x</p>", width=10, height=10, default_font_family="Inter"
+        )
+        assert png_size(png) == (10, 10)
+
+    def test_fonts_do_not_leak_between_renders(self):
+        # A font registered in one render must not make its family visible to
+        # later renders (the shared base collection must stay pristine).
+        # InterVariable.ttf's own family name is "Inter Variable", which only
+        # exists in a render that registered it via fonts=.
+        import pathlib
+
+        font = (
+            pathlib.Path(__file__).parent.parent / "assets" / "InterVariable.ttf"
+        ).read_bytes()
+        blitz_py.render_png(
+            "<p>x</p>",
+            width=10,
+            height=10,
+            fonts=[font],
+            default_font_family="Inter Variable",
+        )
+        with pytest.raises(ValueError):
+            blitz_py.render_png(
+                "<p>x</p>", width=10, height=10, default_font_family="Inter Variable"
+            )
+
     def test_garbage_font_bytes_do_not_crash(self):
         png = blitz_py.render_png(
             "<p>x</p>", width=50, height=50, fonts=[b"not a font at all"]
