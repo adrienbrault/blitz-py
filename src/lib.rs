@@ -194,18 +194,17 @@ fn base_collection() -> parley::fontique::Collection {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_impl(
+fn build_document(
     html: &str,
     width: u32,
     height: u32,
     scale: f32,
     color_scheme: ColorScheme,
-    background: Option<blitz_dom::util::Color>,
     base_url: Option<String>,
     fonts: Vec<Vec<u8>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
-) -> PyResult<RenderResult> {
+) -> PyResult<HtmlDocument> {
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
@@ -231,7 +230,7 @@ fn render_impl(
     let physical_width = (width as f64 * scale as f64) as u32;
     let physical_height = (height as f64 * scale as f64) as u32;
 
-    let mut document = HtmlDocument::from_html(
+    Ok(HtmlDocument::from_html(
         html,
         DocumentConfig {
             base_url,
@@ -245,14 +244,17 @@ fn render_impl(
             font_ctx: Some(font_ctx),
             ..Default::default()
         },
-    );
+    ))
+}
 
-    // First resolve dispatches resource loads (delivered synchronously by
-    // SyncProvider); second resolve restyles/relayouts with them applied.
-    document.as_mut().resolve(0.0);
-    document.as_mut().resolve(0.0);
-
-    let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+fn paint_frame(
+    document: &mut HtmlDocument,
+    scale: f32,
+    physical_width: u32,
+    physical_height: u32,
+    background: Option<blitz_dom::util::Color>,
+) -> Vec<u8> {
+    render_to_buffer::<VelloCpuImageRenderer, _>(
         |scene| {
             if let Some(color) = background {
                 scene.fill(
@@ -275,13 +277,98 @@ fn render_impl(
         },
         physical_width,
         physical_height,
-    );
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_impl(
+    html: &str,
+    width: u32,
+    height: u32,
+    scale: f32,
+    color_scheme: ColorScheme,
+    background: Option<blitz_dom::util::Color>,
+    base_url: Option<String>,
+    fonts: Vec<Vec<u8>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+) -> PyResult<RenderResult> {
+    let mut document = build_document(
+        html,
+        width,
+        height,
+        scale,
+        color_scheme,
+        base_url,
+        fonts,
+        default_font_family,
+        allow_file_urls,
+    )?;
+    let physical_width = (width as f64 * scale as f64) as u32;
+    let physical_height = (height as f64 * scale as f64) as u32;
+
+    // First resolve dispatches resource loads (delivered synchronously by
+    // SyncProvider); second resolve restyles/relayouts with them applied.
+    document.as_mut().resolve(0.0);
+    document.as_mut().resolve(0.0);
+
+    let rgba = paint_frame(&mut document, scale, physical_width, physical_height, background);
 
     Ok(RenderResult {
         rgba,
         width: physical_width,
         height: physical_height,
     })
+}
+
+const MAX_FRAMES: usize = 1000;
+
+#[allow(clippy::too_many_arguments)]
+fn render_frames_impl(
+    html: &str,
+    width: u32,
+    height: u32,
+    times: &[f64],
+    scale: f32,
+    color_scheme: ColorScheme,
+    background: Option<blitz_dom::util::Color>,
+    base_url: Option<String>,
+    fonts: Vec<Vec<u8>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
+    let mut document = build_document(
+        html,
+        width,
+        height,
+        scale,
+        color_scheme,
+        base_url,
+        fonts,
+        default_font_family,
+        allow_file_urls,
+    )?;
+    let physical_width = (width as f64 * scale as f64) as u32;
+    let physical_height = (height as f64 * scale as f64) as u32;
+
+    // Load resources at the first timestamp (see render_impl).
+    document.as_mut().resolve(times[0]);
+    document.as_mut().resolve(times[0]);
+
+    let mut frames = Vec::with_capacity(times.len());
+    for (i, &t) in times.iter().enumerate() {
+        if i > 0 {
+            document.as_mut().resolve(t);
+        }
+        frames.push(paint_frame(
+            &mut document,
+            scale,
+            physical_width,
+            physical_height,
+            background,
+        ));
+    }
+    Ok((physical_width, physical_height, frames))
 }
 
 fn encode_png(result: &RenderResult) -> Vec<u8> {
@@ -379,10 +466,79 @@ fn render_rgba<'py>(
     ))
 }
 
+/// Render an HTML string at multiple animation timestamps.
+///
+/// `times` is a list of seconds on the document's animation clock; CSS
+/// animations and transitions are evaluated at each instant, so a list like
+/// `[i / 20 for i in range(40)]` yields 40 frames of a 2-second loop at
+/// 20fps. Returns `(width, height, [rgba_bytes, ...])` — feed the frames to
+/// Pillow to assemble a GIF:
+///
+/// ```python
+/// w, h, frames = blitz_py.render_frames(html, width=240, height=240,
+///                                       times=[i/20 for i in range(40)])
+/// imgs = [Image.frombytes("RGBA", (w, h), f).convert("P") for f in frames]
+/// imgs[0].save("out.gif", save_all=True, append_images=imgs[1:],
+///              duration=50, loop=0)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (html, *, width, height, times, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false))]
+#[allow(clippy::too_many_arguments)]
+fn render_frames<'py>(
+    py: Python<'py>,
+    html: &str,
+    width: u32,
+    height: u32,
+    times: Vec<f64>,
+    scale: f32,
+    color_scheme: &str,
+    background: Option<&str>,
+    base_url: Option<String>,
+    fonts: Option<Vec<Vec<u8>>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
+    validate(width, height, scale)?;
+    let color_scheme = parse_color_scheme(color_scheme)?;
+    let background = parse_background(background)?;
+    if times.is_empty() {
+        return Err(PyValueError::new_err("times must not be empty"));
+    }
+    if times.len() > MAX_FRAMES {
+        return Err(PyValueError::new_err(format!(
+            "at most {MAX_FRAMES} frames per call (got {})",
+            times.len()
+        )));
+    }
+    if times.iter().any(|t| !t.is_finite() || *t < 0.0) {
+        return Err(PyValueError::new_err(
+            "times must be finite and non-negative",
+        ));
+    }
+    let (w, h, frames) = py.detach(|| {
+        render_frames_impl(
+            html,
+            width,
+            height,
+            &times,
+            scale,
+            color_scheme,
+            background,
+            base_url,
+            fonts.unwrap_or_default(),
+            default_font_family,
+            allow_file_urls,
+        )
+    })?;
+    let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+    Ok((w, h, frames))
+}
+
 #[pymodule]
 fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(render_png, m)?)?;
     m.add_function(wrap_pyfunction!(render_rgba, m)?)?;
+    m.add_function(wrap_pyfunction!(render_frames, m)?)?;
     Ok(())
 }

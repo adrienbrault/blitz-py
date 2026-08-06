@@ -205,6 +205,50 @@ class TestColorScheme:
         assert pixel(dark, w, 5, 5) == (0, 0, 0, 255)
 
 
+ANIMATED_HTML = (
+    "<style>body{margin:0;background:#fff}"
+    ".b{width:20px;height:20px;background:#e11;animation:m 2s linear infinite}"
+    "@keyframes m{from{transform:translateX(0)}to{transform:translateX(80px)}}"
+    "</style><body><div class='b'></div></body>"
+)
+
+
+class TestFrames:
+    def test_animation_advances(self):
+        w, h, frames = blitz_py.render_frames(
+            ANIMATED_HTML, width=100, height=40, times=[0.0, 0.5, 1.0]
+        )
+        assert (w, h) == (100, 40)
+        assert len(frames) == 3
+        assert frames[0] != frames[1] != frames[2]
+        # box starts at x=0: red at (5,10) in frame 0, white in frame 2
+        assert pixel(frames[0], w, 5, 10)[0] > 200
+        assert pixel(frames[2], w, 5, 10) == (255, 255, 255, 255)
+        # at t=1.0 (50%) the box straddles x=40..60
+        assert pixel(frames[2], w, 50, 10)[0] > 200
+
+    def test_deterministic_frames(self):
+        _, _, a = blitz_py.render_frames(ANIMATED_HTML, width=100, height=40, times=[0.75])
+        _, _, b = blitz_py.render_frames(ANIMATED_HTML, width=100, height=40, times=[0.75])
+        assert a == b
+
+    def test_static_content_stable(self):
+        _, _, frames = blitz_py.render_frames(
+            "<body style='background:#123'>", width=20, height=20, times=[0.0, 5.0]
+        )
+        assert frames[0] == frames[1]
+
+    def test_times_validation(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_frames("<p>x</p>", width=10, height=10, times=[])
+        with pytest.raises(ValueError):
+            blitz_py.render_frames("<p>x</p>", width=10, height=10, times=[-1.0])
+        with pytest.raises(ValueError):
+            blitz_py.render_frames(
+                "<p>x</p>", width=10, height=10, times=[0.0] * 1001
+            )
+
+
 class TestErrors:
     def test_zero_dimensions(self):
         with pytest.raises(ValueError):

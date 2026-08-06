@@ -64,13 +64,34 @@ w, h, rgba = blitz_py.render_rgba(html, width=240, height=240)
 Image.frombytes("RGBA", (w, h), rgba).convert("RGB").save("out.jpg", quality=90)
 ```
 
+## Animated GIFs
+
+CSS animations are evaluated on a deterministic clock: `render_frames` renders the document at any list of timestamps (seconds), and Pillow assembles the GIF. Frames after the first reuse the parsed document, so they're fast — ~1ms per 240×240 frame:
+
+```python
+from PIL import Image
+
+fps, seconds = 20, 3.2
+w, h, frames = blitz_py.render_frames(
+    html, width=240, height=240,
+    times=[i / fps for i in range(int(fps * seconds))],
+)
+imgs = [Image.frombytes("RGBA", (w, h), f).convert("RGB")
+        .convert("P", palette=Image.ADAPTIVE) for f in frames]
+imgs[0].save("widget.gif", save_all=True, append_images=imgs[1:],
+             duration=int(1000 / fps), loop=0)
+```
+
+Anything `@keyframes` can express — transforms, opacity, colors — loops perfectly because you control the clock. See [examples/animated_widget.py](examples/animated_widget.py).
+
 ## API
 
-Two functions, same keyword arguments:
+Three functions, same keyword arguments:
 
 ```python
 render_png(html, *, width, height, ...) -> bytes            # PNG file bytes
 render_rgba(html, *, width, height, ...) -> (w, h, bytes)   # raw RGBA pixels
+render_frames(html, *, width, height, times, ...) -> (w, h, [bytes, ...])  # animation frames
 ```
 
 | Argument | Default | Meaning |
