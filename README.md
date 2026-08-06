@@ -66,6 +66,12 @@ Image.frombytes("RGBA", (w, h), rgba).convert("RGB").save("out.jpg", quality=90)
 
 ## Animated GIFs
 
+<p align="center">
+  <img src="docs/samples/sample_animation.gif" width="560" alt="Animated dashboard: radar sweep, equalizer bars, deploy progress, typewriter terminal — pure CSS keyframes">
+</p>
+
+Everything above is Tailwind classes + CSS `@keyframes` ([source](examples/mission_control.html)): a rotating conic-gradient radar sweep with timed blips, staggered equalizer bars, an indeterminate progress sweep, and a `steps()`-driven typewriter — 48 frames rendered in ~250ms.
+
 CSS animations are evaluated on a deterministic clock: `render_frames` renders the document at any list of timestamps (seconds), and Pillow assembles the GIF. Frames after the first reuse the parsed document, so they're fast — ~1ms per 240×240 frame:
 
 ```python
