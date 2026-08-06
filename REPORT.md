@@ -12,7 +12,7 @@
 | Images without network | `data:` URIs work via a tiny custom `NetProvider` (~25 lines) that decodes them synchronously. `file://` behind an opt-in flag. http(s) intentionally unsupported. |
 | Custom fonts | `fonts=[ttf_bytes]` + `default_font_family=` registers fonts from Python and remaps the CSS generic families (`sans-serif` etc.) — verified rendering with a non-default font. This is the answer for fontless Alpine containers. |
 | **The exact HA scenario** | **Verified end-to-end in Docker**: `maturin build --compatibility musllinux_1_2` inside `rust:alpine` (aarch64) → 6.5MB abi3 wheel → `pip install` in bare `python:3.12-alpine` → renders correctly with zero system fonts using Python-supplied font bytes. |
-| Fontconfig portability trap | On Linux, Blitz's default `system-fonts` feature links libfontconfig (forbidden in manylinux/musllinux wheels; broke the first Alpine build). Solved by enabling fontique's `fontconfig-dlopen` feature: fontconfig is loaded at runtime *if present*, never linked — glibc desktops get system fonts, Alpine falls back to bundled fonts. |
+| Fontconfig portability trap | On Linux, Blitz's default `system-fonts` feature links libfontconfig (forbidden in manylinux/musllinux wheels; broke the first Alpine build). Solved by enabling fontique's `fontconfig-dlopen` feature: fontconfig is loaded at runtime *if present*, never linked. Alpine fallback (no fontconfig) verified; system-font discovery on glibc desktops via dlopen is fontique's documented behavior but not yet tested — add to v0.1 checklist. |
 | Python API cost | GIL released during render (`py.detach`), so it won't block Home Assistant's event loop when run in an executor. `render_rgba` returns raw pixels for zero-copy-ish handoff to Pillow (`Image.frombytes` → JPEG for the ESP display). |
 
 The binding surface is intentionally tiny — two functions:
@@ -42,7 +42,7 @@ render_rgba(...) -> (width, height, rgba_bytes)   # → PIL.Image.frombytes("RGB
   - macOS: arm64 (+ x86_64 if cheap)
   - Windows: x64 (free with maturin-action; widens the audience beyond our use case)
   - No armv7: HA [dropped 32-bit](https://www.home-assistant.io/blog/2025/05/22/deprecating-core-and-supervised-installation-methods-and-32-bit-systems/) as of 2025.12/2026.03. One less cross-compile headache.
-- Wheel size ~4–6MB compressed (11MB dylib, thin LTO). Fine.
+- Wheel size: 6.5MB (measured, musllinux aarch64 abi3; 11MB dylib, thin LTO). Fine.
 - For geekmagic-hacs: `manifest.json` gains one requirement line. Install becomes `pip install blitz-py` — no compiler on user machines, ever.
 
 ### Naming
