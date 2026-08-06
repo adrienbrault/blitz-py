@@ -11,6 +11,8 @@
 | Performance | 136ms cold (first render includes font discovery), **22ms warm** for 240×240. PNG ~15KB. |
 | Images without network | `data:` URIs work via a tiny custom `NetProvider` (~25 lines) that decodes them synchronously. `file://` behind an opt-in flag. http(s) intentionally unsupported. |
 | Custom fonts | `fonts=[ttf_bytes]` + `default_font_family=` registers fonts from Python and remaps the CSS generic families (`sans-serif` etc.) — verified rendering with a non-default font. This is the answer for fontless Alpine containers. |
+| **The exact HA scenario** | **Verified end-to-end in Docker**: `maturin build --compatibility musllinux_1_2` inside `rust:alpine` (aarch64) → 6.5MB abi3 wheel → `pip install` in bare `python:3.12-alpine` → renders correctly with zero system fonts using Python-supplied font bytes. |
+| Fontconfig portability trap | On Linux, Blitz's default `system-fonts` feature links libfontconfig (forbidden in manylinux/musllinux wheels; broke the first Alpine build). Solved by enabling fontique's `fontconfig-dlopen` feature: fontconfig is loaded at runtime *if present*, never linked — glibc desktops get system fonts, Alpine falls back to bundled fonts. |
 | Python API cost | GIL released during render (`py.detach`), so it won't block Home Assistant's event loop when run in an executor. `render_rgba` returns raw pixels for zero-copy-ish handoff to Pillow (`Image.frombytes` → JPEG for the ESP display). |
 
 The binding surface is intentionally tiny — two functions:
@@ -64,6 +66,3 @@ HA's container has ~no fonts. Recommendation: **bundle one compact open font** (
 2. **v0.2**: auto-height mode (`height=None` → content height, Blitz already computes it), `transparent` background shorthand, maybe markdown convenience (`render_markdown`, Blitz has a frontend for it).
 3. **geekmagic-hacs integration**: new `HtmlRenderer` alongside the Pillow renderer; port one widget as proof; keep both paths during migration; run renders via `hass.async_add_executor_job` (GIL already released Rust-side).
 
-## What's still running
-
-A Docker build of the musllinux aarch64 wheel + install test in bare `python:3.12-alpine` (the exact HA scenario, zero system fonts) — results will confirm the last packaging assumption.
