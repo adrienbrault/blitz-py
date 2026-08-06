@@ -1,0 +1,7 @@
+/target
+/.venv
+/dist
+__pycache__/
+*.so
+examples/out_*.png
+examples/out_*.jpg

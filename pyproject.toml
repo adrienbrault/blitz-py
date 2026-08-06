@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "blitz-py"
+description = "Render HTML/CSS to images from Python, powered by the Blitz engine (Stylo + Taffy + Parley + Vello). No browser required."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["html", "css", "render", "screenshot", "blitz", "headless"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dynamic = ["version"]
+
+[tool.maturin]
+module-name = "blitz_py"

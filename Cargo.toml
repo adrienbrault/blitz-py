@@ -1,0 +1,32 @@
+[package]
+name = "blitz-py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Python bindings for the Blitz HTML/CSS rendering engine"
+
+[lib]
+name = "blitz_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27", features = ["abi3-py310"] }
+blitz-dom = { version = "0.3.0-beta.1", default-features = false }
+blitz-html = "0.3.0-beta.1"
+blitz-paint = "0.3.0-beta.1"
+blitz-traits = "0.3.0-beta.1"
+anyrender = "0.11"
+anyrender_vello_cpu = "0.14"
+parley = "0.10"
+# fontconfig-dlopen: load fontconfig at runtime if present instead of linking
+# it. Keeps Linux wheels free of a libfontconfig link dependency (forbidden by
+# manylinux/musllinux policies) while still discovering system fonts on
+# distros that have it.
+fontique = { version = "0.10", features = ["fontconfig-dlopen"] }
+peniko = "0.6"
+data-url = "0.3"
+png = "0.17"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
