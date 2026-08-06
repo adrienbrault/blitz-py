@@ -79,6 +79,17 @@ b64 = base64.b64encode(open("icon.png", "rb").read()).decode()
 html = f'<img src="data:image/png;base64,{b64}" style="width:32px">'
 ```
 
+### CSS frameworks (Bootstrap, Tailwind, ...)
+
+Any framework that ships as plain CSS works — inline it in a `<style>` tag:
+
+```python
+css = open("bootstrap.min.css").read()  # fetch/cache it however you like
+html = f"<style>{css}</style><body class='p-4'><div class='card'>...</div></body>"
+```
+
+Bootstrap 5 components (cards, buttons, badges, alerts, progress bars) render correctly. For Tailwind, run its build step and inline the generated CSS — the JS "Play CDN" won't work because there is no JavaScript engine. JS-driven behavior (modals opening, dropdowns) doesn't apply to static rendering anyway.
+
 ### Fonts
 
 Bundled Inter is the default for every CSS generic family and the Latin-script fallback, everywhere. Explicit family names (`font-family: "Comic Sans MS"`) resolve against system fonts where available (macOS/Windows natively; Linux via fontconfig loaded at runtime if present — never a link dependency). To use your own font:
@@ -88,6 +99,17 @@ font = open("MyFont.ttf", "rb").read()
 blitz_py.render_png(html, width=240, height=240,
                     fonts=[font], default_font_family="My Font")
 ```
+
+`@font-face` also works with `data:` (or `file://`) sources — state the format explicitly, either as the unquoted CSS keyword or a bare extension string:
+
+```css
+@font-face {
+  font-family: MyWebFont;
+  src: url(data:font/ttf;base64,...) format(truetype);  /* or format("ttf") */
+}
+```
+
+WOFF/WOFF2 sources are supported too. `local(...)` sources and format-less data URIs are currently skipped by the engine.
 
 ### What's supported
 

@@ -156,6 +156,29 @@ class TestPixels:
         assert a == 255 and r > 200 and g < 60 and b < 60
 
 
+class TestFontFace:
+    def test_font_face_data_uri(self):
+        # Requires the whole @font-face pipeline (data URI fetch -> format
+        # sniff -> register under the CSS family name) not to drop the source.
+        import pathlib
+
+        font_path = pathlib.Path(__file__).parent.parent / "assets" / "InterVariable.ttf"
+        b64 = base64.b64encode(font_path.read_bytes()).decode()
+        html = (
+            "<style>"
+            f"@font-face {{ font-family: TestFace; src: url(data:font/ttf;base64,{b64}) format(truetype); }}"
+            "body { margin:0; background:#fff; color:#000 }"
+            "h1 { font-family: TestFace; font-size: 40px }"
+            "</style><body><h1>Ink</h1>"
+        )
+        w, h, rgba = blitz_py.render_rgba(html, width=200, height=80)
+        assert any(
+            pixel(rgba, w, x, y) != (255, 255, 255, 255)
+            for x in range(0, 200, 2)
+            for y in range(0, 80, 2)
+        )
+
+
 class TestFlexbox:
     def test_centering(self):
         html = (
