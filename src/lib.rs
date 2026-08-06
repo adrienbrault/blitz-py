@@ -92,6 +92,55 @@ struct RenderResult {
     height: u32,
 }
 
+/// Inter (SIL OFL 1.1, see assets/LICENSE-Inter.txt), bundled so that output
+/// is identical across platforms and text renders on systems with no fonts
+/// installed (e.g. Alpine containers).
+static DEFAULT_FONT: &[u8] = include_bytes!("../assets/InterVariable.ttf");
+
+/// Largest permitted physical output dimension. Guards against absurd
+/// allocations (a 100_000² canvas is a 40GB buffer).
+const MAX_DIM: u64 = 16_384;
+
+fn validate(width: u32, height: u32, scale: f32) -> PyResult<()> {
+    if width == 0 || height == 0 {
+        return Err(PyValueError::new_err("width and height must be > 0"));
+    }
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err(PyValueError::new_err("scale must be a positive number"));
+    }
+    let pw = (width as f64 * scale as f64) as u64;
+    let ph = (height as f64 * scale as f64) as u64;
+    if pw == 0 || ph == 0 || pw > MAX_DIM || ph > MAX_DIM {
+        return Err(PyValueError::new_err(format!(
+            "physical output dimensions {pw}x{ph} outside supported range 1..={MAX_DIM}"
+        )));
+    }
+    Ok(())
+}
+
+fn set_default_family(font_ctx: &mut parley::FontContext, family: &str) -> bool {
+    use parley::fontique::{FallbackKey, GenericFamily, Script};
+    let ids: Vec<_> = font_ctx.collection.family_id(family).into_iter().collect();
+    if ids.is_empty() {
+        return false;
+    }
+    for generic in [
+        GenericFamily::Serif,
+        GenericFamily::SansSerif,
+        GenericFamily::Monospace,
+        GenericFamily::SystemUi,
+    ] {
+        font_ctx
+            .collection
+            .set_generic_families(generic, ids.iter().copied());
+    }
+    let latin: Script = "Latn".parse().expect("valid script tag");
+    font_ctx
+        .collection
+        .set_fallbacks(FallbackKey::new(latin, None), ids.iter().copied());
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_impl(
     html: &str,
@@ -104,27 +153,26 @@ fn render_impl(
     fonts: Vec<Vec<u8>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
-) -> RenderResult {
+) -> PyResult<RenderResult> {
     let mut font_ctx = parley::FontContext::new();
+
+    // Bundled Inter is the default for generic families and Latin fallback,
+    // making output identical across platforms (and non-blank on systems
+    // without fonts). Explicit CSS family names still resolve to system
+    // fonts where available.
+    let blob = parley::fontique::Blob::new(Arc::new(DEFAULT_FONT));
+    font_ctx.collection.register_fonts(blob, None);
+    set_default_family(&mut font_ctx, "Inter");
+
     for font in fonts {
         let blob = parley::fontique::Blob::new(Arc::new(font));
         font_ctx.collection.register_fonts(blob, None);
     }
-    if let Some(family) = default_font_family {
-        use parley::fontique::{FallbackKey, GenericFamily, Script};
-        let ids: Vec<_> = font_ctx
-            .collection
-            .family_id(&family)
-            .into_iter()
-            .collect();
-        if !ids.is_empty() {
-            for generic in [GenericFamily::Serif, GenericFamily::SansSerif, GenericFamily::Monospace] {
-                font_ctx.collection.set_generic_families(generic, ids.iter().copied());
-            }
-            let latin: Script = "Latn".parse().expect("valid script tag");
-            font_ctx
-                .collection
-                .set_fallbacks(FallbackKey::new(latin, None), ids.iter().copied());
+    if let Some(family) = &default_font_family {
+        if !set_default_family(&mut font_ctx, family) {
+            return Err(PyValueError::new_err(format!(
+                "default_font_family '{family}' not found among registered or system fonts"
+            )));
         }
     }
 
@@ -177,11 +225,11 @@ fn render_impl(
         physical_height,
     );
 
-    RenderResult {
+    Ok(RenderResult {
         rgba,
         width: physical_width,
         height: physical_height,
-    }
+    })
 }
 
 fn encode_png(result: &RenderResult) -> Vec<u8> {
@@ -214,9 +262,10 @@ fn render_png<'py>(
     default_font_family: Option<String>,
     allow_file_urls: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
+    validate(width, height, scale)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
-    let result = py.detach(|| {
+    let result = py.detach(|| -> PyResult<Vec<u8>> {
         let result = render_impl(
             html,
             width,
@@ -228,9 +277,9 @@ fn render_png<'py>(
             fonts.unwrap_or_default(),
             default_font_family,
             allow_file_urls,
-        );
-        encode_png(&result)
-    });
+        )?;
+        Ok(encode_png(&result))
+    })?;
     Ok(PyBytes::new(py, &result))
 }
 
@@ -254,6 +303,7 @@ fn render_rgba<'py>(
     default_font_family: Option<String>,
     allow_file_urls: bool,
 ) -> PyResult<(u32, u32, Bound<'py, PyBytes>)> {
+    validate(width, height, scale)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let result = py.detach(|| {
@@ -269,7 +319,7 @@ fn render_rgba<'py>(
             default_font_family,
             allow_file_urls,
         )
-    });
+    })?;
     Ok((
         result.width,
         result.height,
@@ -279,6 +329,7 @@ fn render_rgba<'py>(
 
 #[pymodule]
 fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(render_png, m)?)?;
     m.add_function(wrap_pyfunction!(render_rgba, m)?)?;
     Ok(())
