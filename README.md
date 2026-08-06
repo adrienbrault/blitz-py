@@ -11,16 +11,15 @@ A 240×240 widget renders in ~1.5ms warm on an M-series Mac (~40ms for the first
 
 ## What it looks like
 
-![tailwind dashboard](docs/samples/sample_tailwind.png)
+<p align="center">
+  <img src="docs/samples/sample_tailwind.png" width="560" alt="Dashboard rendered from Tailwind v4 CSS: bento grid, SVG donut and sparkline, avatar stack, gradients">
+</p>
+<p align="center">
+  <img src="docs/samples/sample_widget.png" width="170" alt="240x240 smart-display widget, hand-written CSS">
+  <img src="docs/samples/sample_bootstrap.png" width="280" alt="Bootstrap 5.3 card with buttons, badge, alert and progress bar">
+</p>
 
-A full dashboard — CSS grid, flexbox, inline-SVG sparkline, stat tiles, meters — from real Tailwind v4 build output ([source](examples/tailwind_dashboard.html)).
-
-| Smart-display widget | Bootstrap 5.3 |
-|:---:|:---:|
-| ![widget](docs/samples/sample_widget.png) | ![bootstrap](docs/samples/sample_bootstrap.png) |
-| hand-written CSS, flexbox + gradients | real `bootstrap.min.css`, inlined |
-
-All samples are unedited `render_png` output (2× scale). Generation code: [examples/widget.py](examples/widget.py) and the snippets below.
+Unedited `render_png` output: a [Tailwind v4](examples/tailwind_dashboard.html) dashboard (grid, SVG donut + sparkline, gradients, avatar stack), a [240×240 widget](examples/widget.py), and Bootstrap 5.3 components.
 
 ## Install
 
