@@ -1,100 +1,162 @@
-<div class="min-h-full bg-slate-900 p-6 font-sans">
+<div class="min-h-full bg-[#0b1120] p-6 font-sans text-slate-200">
+
   <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-lg font-semibold text-white">Acme Outdoor — revenue</h1>
-      <p class="text-sm text-slate-400">July 8 – August 6, 2026</p>
+    <div class="flex items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 shadow-lg shadow-blue-500/40">
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="white"><path d="M13 2 4.9 12.6H11L9.6 22 19 10.4h-6.2L13 2z"/></svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-lg font-bold tracking-tight text-white">Pulse</h1>
+          <span class="rounded-md bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-400 ring-1 ring-emerald-400/25">prod</span>
+        </div>
+        <p class="text-xs text-slate-500">edge render metrics &#183; last 30 days</p>
+      </div>
     </div>
-    <span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">Last 30 days</span>
+    <div class="flex items-center gap-3">
+      <div class="flex -space-x-2">
+        <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-blue-600 text-[10px] font-semibold text-white ring-2 ring-[#0b1120]">MB</span>
+        <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-600 text-[10px] font-semibold text-white ring-2 ring-[#0b1120]">AS</span>
+        <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-[10px] font-semibold text-white ring-2 ring-[#0b1120]">JP</span>
+        <span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-[10px] font-medium text-slate-300 ring-2 ring-[#0b1120]">+5</span>
+      </div>
+      <span class="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
+        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>Live</span>
+    </div>
   </div>
 
-  <div class="mt-5 grid grid-cols-3 gap-4">
-    <div class="rounded-xl bg-slate-800/70 p-4 ring-1 ring-white/5">
-      <p class="text-xs text-slate-400">Revenue</p>
-      <p class="mt-1 text-2xl font-semibold text-white">$128.4K</p>
-      <p class="mt-1 text-xs text-emerald-400">&#8593; +12.4% <span class="text-slate-500">vs June</span></p>
-    </div>
-    <div class="rounded-xl bg-slate-800/70 p-4 ring-1 ring-white/5">
-      <p class="text-xs text-slate-400">Orders</p>
-      <p class="mt-1 text-2xl font-semibold text-white">3,421</p>
-      <p class="mt-1 text-xs text-emerald-400">&#8593; +4.2% <span class="text-slate-500">vs June</span></p>
-    </div>
-    <div class="rounded-xl bg-slate-800/70 p-4 ring-1 ring-white/5">
-      <p class="text-xs text-slate-400">Refund rate</p>
-      <p class="mt-1 text-2xl font-semibold text-white">1.8%</p>
-      <p class="mt-1 text-xs text-emerald-400">&#8595; &#8722;0.3pt <span class="text-slate-500">vs June</span></p>
-    </div>
-  </div>
+  <div class="mt-5 grid grid-cols-6 gap-4">
 
-  <div class="mt-4 grid grid-cols-2 gap-4">
-    <div class="rounded-xl bg-slate-800/70 p-5 ring-1 ring-white/5">
-      <h2 class="text-sm font-medium text-slate-200">Daily revenue</h2>
-      <div class="mt-3"><svg viewBox="0 0 320 96" class="w-full h-24" preserveAspectRatio="none">
-  <line x1="6" y1="24" x2="314" y2="24" stroke="#1e293b" stroke-width="1"/>
-  <line x1="6" y1="48" x2="314" y2="48" stroke="#1e293b" stroke-width="1"/>
-  <line x1="6" y1="72" x2="314" y2="72" stroke="#1e293b" stroke-width="1"/>
-  <path d="M6.0,90 L6.0,75.6 L16.6,68.4 L27.2,73.2 L37.9,58.8 L48.5,51.6 L59.1,56.4 L69.7,66.0 L80.3,61.2 L91.0,46.8 L101.6,39.6 L112.2,49.2 L122.8,44.4 L133.4,51.6 L144.1,58.8 L154.7,42.0 L165.3,32.4 L175.9,37.2 L186.6,27.6 L197.2,34.8 L207.8,44.4 L218.4,39.6 L229.0,30.0 L239.7,22.8 L250.3,27.6 L260.9,32.4 L271.5,20.4 L282.1,15.6 L292.8,25.2 L303.4,30.0 L314.0,25.2 L314.0,90 Z" fill="#3987e5" fill-opacity="0.13"/>
-  <polyline points="6.0,75.6 16.6,68.4 27.2,73.2 37.9,58.8 48.5,51.6 59.1,56.4 69.7,66.0 80.3,61.2 91.0,46.8 101.6,39.6 112.2,49.2 122.8,44.4 133.4,51.6 144.1,58.8 154.7,42.0 165.3,32.4 175.9,37.2 186.6,27.6 197.2,34.8 207.8,44.4 218.4,39.6 229.0,30.0 239.7,22.8 250.3,27.6 260.9,32.4 271.5,20.4 282.1,15.6 292.8,25.2 303.4,30.0 314.0,25.2" fill="none" stroke="#3987e5" stroke-width="2"
+    <div class="relative col-span-4 overflow-hidden rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+      <div class="absolute -right-16 -top-16 h-48 w-48 rounded-full" style="background: radial-gradient(circle, rgba(57,135,229,0.25), transparent 70%)"></div>
+      <div class="flex items-start justify-between">
+        <div>
+          <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Requests served</p>
+          <p class="mt-1 text-5xl font-bold tracking-tight text-white">142.3M</p>
+          <p class="mt-2 text-xs text-emerald-400">&#8593; +12.4% <span class="text-slate-500">vs previous period</span></p>
+        </div>
+        <div class="rotate-3 rounded-lg border border-dashed border-sky-400/40 bg-sky-400/10 px-2.5 py-1.5 shadow-lg shadow-sky-500/20">
+          <p class="font-mono text-[10px] text-sky-300">p50 = 0.9ms</p>
+        </div>
+      </div>
+      <div class="mt-4"><svg viewBox="0 0 420 110" class="w-full h-28" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3987e5" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#3987e5" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <line x1="4" y1="28" x2="416" y2="28" stroke="#ffffff" stroke-opacity="0.05"/>
+  <line x1="4" y1="56" x2="416" y2="56" stroke="#ffffff" stroke-opacity="0.05"/>
+  <line x1="4" y1="84" x2="416" y2="84" stroke="#ffffff" stroke-opacity="0.05"/>
+  <path d="M4.0,106 L4.0,89.5 L18.2,81.2 L32.4,86.7 L46.6,70.2 L60.8,61.9 L75.0,67.4 L89.2,78.4 L103.4,72.9 L117.7,56.4 L131.9,48.1 L146.1,59.1 L160.3,53.6 L174.5,61.9 L188.7,70.2 L202.9,50.9 L217.1,39.8 L231.3,45.4 L245.5,34.3 L259.7,42.6 L273.9,53.6 L288.1,48.1 L302.3,37.1 L316.6,28.8 L330.8,34.3 L345.0,39.8 L359.2,26.1 L373.4,20.5 L387.6,31.6 L401.8,37.1 L416.0,20.5 L416.0,106 Z" fill="url(#fade)"/>
+  <polyline points="4.0,89.5 18.2,81.2 32.4,86.7 46.6,70.2 60.8,61.9 75.0,67.4 89.2,78.4 103.4,72.9 117.7,56.4 131.9,48.1 146.1,59.1 160.3,53.6 174.5,61.9 188.7,70.2 202.9,50.9 217.1,39.8 231.3,45.4 245.5,34.3 259.7,42.6 273.9,53.6 288.1,48.1 302.3,37.1 316.6,28.8 330.8,34.3 345.0,39.8 359.2,26.1 373.4,20.5 387.6,31.6 401.8,37.1 416.0,20.5" fill="none" stroke="#3987e5" stroke-width="2.5"
             stroke-linejoin="round" stroke-linecap="round"/>
-  <circle cx="314.0" cy="25.2" r="5" fill="#1e293b"/>
-  <circle cx="314.0" cy="25.2" r="3.5" fill="#3987e5"/>
+  <circle cx="416.0" cy="20.5" r="6" fill="#0b1120"/>
+  <circle cx="416.0" cy="20.5" r="4" fill="#60a5fa"/>
 </svg></div>
-      <div class="mt-1 flex justify-between text-[11px] text-slate-500">
-        <span>Jul 8</span><span class="text-slate-300">$5.2K/day &#183; latest</span><span>Aug 6</span>
+      <div class="mt-1 flex justify-between text-[10px] text-slate-500"><span>Jul 8</span><span>Aug 6</span></div>
+    </div>
+
+    <div class="col-span-2 flex flex-col justify-between rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+      <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Cache</p>
+      <div class="relative mx-auto h-32 w-32">
+        <svg viewBox="0 0 120 120" class="h-32 w-32">
+          <circle cx="60" cy="60" r="44" fill="none" stroke="#1e293b" stroke-width="11"/>
+          <circle cx="60" cy="60" r="44" fill="none" stroke="#3987e5" stroke-width="11"
+                  stroke-dasharray="259.9 276.5" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <span class="text-2xl font-bold tracking-tight text-white">94%</span>
+          <span class="text-[10px] text-slate-500">cache hits</span>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-center">
+        <div class="rounded-lg bg-white/5 py-1.5"><p class="text-[10px] text-slate-500">hits</p><p class="text-sm font-semibold tabular-nums text-white">133.8M</p></div>
+        <div class="rounded-lg bg-white/5 py-1.5"><p class="text-[10px] text-slate-500">misses</p><p class="text-sm font-semibold tabular-nums text-white">8.5M</p></div>
       </div>
     </div>
-    <div class="rounded-xl bg-slate-800/70 p-5 ring-1 ring-white/5">
-      <h2 class="text-sm font-medium text-slate-200">Revenue by channel</h2>
-      <div class="mt-4 space-y-3">
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-slate-400">Search</span>
-        <div class="flex-1"><div class="h-4 rounded-r bg-[#3987e5]" style="width:100%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-300">$48.2K</span>
+
+    <div class="col-span-2 rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+      <div class="flex items-baseline justify-between">
+        <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Renders / hour</p>
+        <p class="text-xs tabular-nums text-slate-400">peak 96K</p>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-slate-400">Direct</span>
-        <div class="flex-1"><div class="h-4 rounded-r bg-[#3987e5]" style="width:66%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-300">$31.6K</span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-slate-400">Retail</span>
-        <div class="flex-1"><div class="h-4 rounded-r bg-[#3987e5]" style="width:46%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-300">$22.4K</span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-slate-400">Partners</span>
-        <div class="flex-1"><div class="h-4 rounded-r bg-[#3987e5]" style="width:33%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-300">$15.8K</span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-slate-400">Social</span>
-        <div class="flex-1"><div class="h-4 rounded-r bg-[#3987e5]" style="width:22%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-300">$10.4K</span>
-      </div>
+      <div class="mt-4 flex h-24 items-end gap-1.5">
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:34%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:46%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:40%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:58%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:66%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:52%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:44%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:62%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:78%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:70%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]/45" style="height:84%"></div>
+        <div class="w-2.5 rounded-t bg-[#3987e5]" style="height:96%"></div>
       </div>
     </div>
+
+    <div class="col-span-2 rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+      <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Regions</p>
+      <div class="mt-3 divide-y divide-white/5">
+      <div class="flex items-center gap-3 py-2">
+        <span class="w-16 shrink-0 font-mono text-xs text-slate-300">eu-west</span>
+        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:42%"></div></div>
+        <span class="w-12 shrink-0 text-right text-xs tabular-nums text-slate-400">18ms</span>
+      </div>
+      <div class="flex items-center gap-3 py-2">
+        <span class="w-16 shrink-0 font-mono text-xs text-slate-300">us-east</span>
+        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:71%"></div></div>
+        <span class="w-12 shrink-0 text-right text-xs tabular-nums text-slate-400">34ms</span>
+      </div>
+      <div class="flex items-center gap-3 py-2">
+        <span class="w-16 shrink-0 font-mono text-xs text-slate-300">ap-south</span>
+        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:55%"></div></div>
+        <span class="w-12 shrink-0 text-right text-xs tabular-nums text-slate-400">51ms</span>
+      </div>
+      </div>
+      <div class="mt-3 flex items-center justify-center rounded-lg border border-dashed border-white/15 py-1.5 text-xs text-slate-500">+ add region</div>
+    </div>
+
+    <div class="col-span-2 rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+      <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Deploys</p>
+      <div class="mt-1 divide-y divide-white/5">
+        <div class="flex items-center gap-2.5 py-2.5">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-blue-600 text-[10px] font-semibold text-white">MB</span>
+          <div class="flex-1">
+            <p class="text-xs font-medium text-slate-200">gateway</p>
+            <p class="font-mono text-[10px] text-slate-500">v2.14 &#183; 2m</p>
+          </div>
+          <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-emerald-400/20">
+            <span class="h-1 w-1 rounded-full bg-emerald-400"></span>Deployed</span>
+        </div>
+        <div class="flex items-center gap-2.5 py-2.5">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-600 text-[10px] font-semibold text-white">AS</span>
+          <div class="flex-1">
+            <p class="text-xs font-medium text-slate-200">renderer</p>
+            <p class="font-mono text-[10px] text-slate-500">v0.9 &#183; 18m</p>
+          </div>
+          <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-400 ring-1 ring-amber-400/20">
+            <span class="h-1 w-1 rounded-full bg-amber-400"></span>Building</span>
+        </div>
+        <div class="flex items-center gap-2.5 py-2.5">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-[10px] font-semibold text-white">JP</span>
+          <div class="flex-1">
+            <p class="text-xs font-medium text-slate-200">frontend</p>
+            <p class="font-mono text-[10px] text-slate-500">v5.2 &#183; 1h</p>
+          </div>
+          <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-emerald-400/20">
+            <span class="h-1 w-1 rounded-full bg-emerald-400"></span>Deployed</span>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <div class="mt-4 rounded-xl bg-slate-800/70 p-5 ring-1 ring-white/5">
-    <div class="flex items-center justify-between">
-      <h2 class="text-sm font-medium text-slate-200">Top products</h2>
-      <span class="text-xs text-slate-500">share of revenue</span>
-    </div>
-    <div class="mt-4 space-y-3">
-      <div class="flex items-center gap-3">
-        <span class="w-24 shrink-0 truncate text-sm text-slate-300">Aurora Lamp</span>
-        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:100%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-400">$18.2K</span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="w-24 shrink-0 truncate text-sm text-slate-300">Field Kettle</span>
-        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:80%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-400">$14.6K</span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="w-24 shrink-0 truncate text-sm text-slate-300">Trail Flask</span>
-        <div class="h-1.5 flex-1 rounded-full bg-[#1c3a63]"><div class="h-1.5 rounded-full bg-[#3987e5]" style="width:50%"></div></div>
-        <span class="w-14 shrink-0 text-right text-xs tabular-nums text-slate-400">$9.1K</span>
-      </div>
-    </div>
+  <div class="mt-4 flex items-center justify-between text-[11px] text-slate-600">
+    <span>rendered by <span class="font-mono text-slate-400">blitz-py</span> &#8212; no browser, no JS</span>
+    <span class="font-mono">tailwindcss v4 &#183; stylo &#183; taffy &#183; vello_cpu</span>
   </div>
 </div>
