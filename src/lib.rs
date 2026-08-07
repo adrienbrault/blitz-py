@@ -442,6 +442,23 @@ fn render_frames_impl(
     Ok((physical_width, physical_height, frames))
 }
 
+/// Run `f` on a thread with a large explicit stack. Style and layout
+/// traversals recurse per DOM-nesting level; Windows threads default to
+/// ~1MB of stack (vs 8MB on Linux/macOS), which deeply nested documents
+/// overflow — crashing the whole process. 64MB is reserved lazily, so the
+/// cost is only the ~tens of µs thread spawn.
+fn with_render_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("blitz-py-render".into())
+            .stack_size(64 << 20)
+            .spawn_scoped(scope, f)
+            .expect("failed to spawn render thread")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 fn encode_png(result: &RenderResult) -> Vec<u8> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, result.width, result.height);
@@ -481,6 +498,7 @@ fn render_png<'py>(
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
     let result = py.detach(|| -> PyResult<Vec<u8>> {
+        with_render_stack(|| {
         let result = render_impl(
             &html,
             width,
@@ -494,6 +512,7 @@ fn render_png<'py>(
             allow_file_urls,
         )?;
         Ok(encode_png(&result))
+        })
     })?;
     Ok(PyBytes::new(py, &result))
 }
@@ -526,6 +545,7 @@ fn render_rgba<'py>(
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
     let result = py.detach(|| {
+        with_render_stack(|| {
         render_impl(
             &html,
             width,
@@ -538,6 +558,7 @@ fn render_rgba<'py>(
             default_font_family,
             allow_file_urls,
         )
+        })
     })?;
     Ok((
         result.width,
@@ -599,6 +620,7 @@ fn render_frames<'py>(
         ));
     }
     let (w, h, frames) = py.detach(|| {
+        with_render_stack(|| {
         render_frames_impl(
             &html,
             width,
@@ -612,6 +634,7 @@ fn render_frames<'py>(
             default_font_family,
             allow_file_urls,
         )
+        })
     })?;
     let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
     Ok((w, h, frames))
@@ -856,6 +879,7 @@ impl Template {
 
         std::thread::Builder::new()
             .name("blitz-py-template".into())
+            .stack_size(64 << 20)
             .spawn(move || {
                 let built = build_document(
                     &html,
