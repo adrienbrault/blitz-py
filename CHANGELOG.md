@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — 2026-08-07
+
+### Fixed
+- **Animation timestamps are now absolute.** The engine anchors its animation clock at the first style resolve, so `render_frames`/`render_gif` silently treated `times` as relative to `times[0]` (invisible when starting at 0.0, which every example did), and `render_layers`' per-layer `time` was ignored for `html` layers entirely. The binding now anchors at t=0 and resolves each timestamp explicitly. Reported by an integration porting onto `render_layers` — thanks!
+
 ## 0.4.0 — 2026-08-07
 
 ### Added

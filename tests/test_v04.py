@@ -173,6 +173,31 @@ class TestLayers:
         jpg = blitz_py.render_layers_jpeg(layers, width=20, height=20, quality=85)
         assert jpg[:3] == b"\xff\xd8\xff"
 
+    def test_layer_time_html(self):
+        anim = (
+            "<style>body{margin:0;background:#fff}"
+            ".b{width:20px;height:20px;background:#f00;animation:m 2s linear infinite}"
+            "@keyframes m{from{margin-left:0}to{margin-left:100px}}"
+            "</style><body><div class='b'></div></body>"
+        )
+        layer = {"html": anim, "width": 140, "height": 30}
+        w, _, at0 = blitz_py.render_layers([{**layer, "time": 0.0}], width=140, height=30)
+        _, _, at1 = blitz_py.render_layers([{**layer, "time": 1.0}], width=140, height=30)
+        assert pixel(at0, w, 5, 10)[:3] == (255, 0, 0)
+        assert pixel(at1, w, 5, 10)[:3] != (255, 0, 0)
+        assert pixel(at1, w, 55, 10)[:3] == (255, 0, 0)
+
+    def test_layer_time_template(self):
+        anim = (
+            "<style>body{margin:0;background:#fff}"
+            ".b{width:20px;height:20px;background:#f00;animation:m 2s linear infinite}"
+            "@keyframes m{from{margin-left:0}to{margin-left:100px}}"
+            "</style><body><div class='b'></div></body>"
+        )
+        tpl = blitz_py.Template(anim, width=140, height=30)
+        w, _, at1 = blitz_py.render_layers([{"template": tpl, "time": 1.0}], width=140, height=30)
+        assert pixel(at1, w, 55, 10)[:3] == (255, 0, 0)
+
     def test_layer_validation(self):
         with pytest.raises(ValueError):
             blitz_py.render_layers([{}], width=10, height=10)

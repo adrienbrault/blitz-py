@@ -791,15 +791,15 @@ fn render_frames_impl(
     let physical_width = (width as f64 * scale as f64) as u32;
     let physical_height = (height as f64 * scale as f64) as u32;
 
-    // Load resources at the first timestamp (see render_impl).
-    document.as_mut().resolve(times[0]);
-    document.as_mut().resolve(times[0]);
+    // The engine anchors its animation clock at the FIRST resolve, so anchor
+    // at t=0 (also loading resources; see render_impl) and then resolve each
+    // frame's timestamp — making `times` absolute, as documented.
+    document.as_mut().resolve(0.0);
+    document.as_mut().resolve(0.0);
 
     let mut frames = Vec::with_capacity(times.len());
-    for (i, &t) in times.iter().enumerate() {
-        if i > 0 {
-            document.as_mut().resolve(t);
-        }
+    for &t in times {
+        document.as_mut().resolve(t);
         frames.push(paint_frame(
             &mut document,
             scale,

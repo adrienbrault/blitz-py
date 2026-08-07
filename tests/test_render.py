@@ -488,6 +488,19 @@ class TestFrames:
         # at t=1.0 (50%) the box straddles x=40..60
         assert pixel(frames[2], w, 50, 10)[0] > 200
 
+    def test_times_are_absolute(self):
+        # The engine anchors its animation clock at the first resolve; the
+        # binding must compensate so `times` are absolute, not relative to
+        # times[0]. A lone [1.0] must equal the second frame of [0.0, 1.0].
+        _, _, pair = blitz_py.render_frames(
+            ANIMATED_HTML, width=100, height=40, times=[0.0, 1.0]
+        )
+        _, _, lone = blitz_py.render_frames(
+            ANIMATED_HTML, width=100, height=40, times=[1.0]
+        )
+        assert lone[0] == pair[1]
+        assert lone[0] != pair[0]
+
     def test_deterministic_frames(self):
         _, _, a = blitz_py.render_frames(ANIMATED_HTML, width=100, height=40, times=[0.75])
         _, _, b = blitz_py.render_frames(ANIMATED_HTML, width=100, height=40, times=[0.75])
