@@ -1,6 +1,6 @@
 [package]
 name = "blitz-py"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Python bindings for the Blitz HTML/CSS rendering engine"
@@ -27,6 +27,9 @@ fontique = { version = "0.10", features = ["fontconfig-dlopen"] }
 peniko = "0.6"
 data-url = "0.3"
 png = "0.17"
+jpeg-encoder = "0.7"
+color_quant = "2"
+gif = "0.14"
 
 [profile.release]
 opt-level = "s"

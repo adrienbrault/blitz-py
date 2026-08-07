@@ -287,6 +287,9 @@ fn build_document(
                 color_scheme,
             )),
             font_ctx: Some(font_ctx),
+            // Required for set_inner_html (Template.set_html); from_html does
+            // not install one by itself.
+            html_parser_provider: Some(Arc::new(blitz_html::HtmlProvider)),
             ..Default::default()
         },
     ))
@@ -440,6 +443,179 @@ fn render_frames_impl(
         ));
     }
     Ok((physical_width, physical_height, frames))
+}
+
+fn encode_jpeg(result: &RenderResult, quality: u8) -> PyResult<Vec<u8>> {
+    let mut out = Vec::new();
+    let encoder = jpeg_encoder::Encoder::new(&mut out, quality);
+    encoder
+        .encode(
+            &result.rgba,
+            result.width as u16,
+            result.height as u16,
+            jpeg_encoder::ColorType::Rgba,
+        )
+        .map_err(|e| PyValueError::new_err(format!("jpeg encoding failed: {e}")))?;
+    Ok(out)
+}
+
+fn validate_quality(quality: u8) -> PyResult<()> {
+    if !(1..=100).contains(&quality) {
+        return Err(PyValueError::new_err("quality must be in 1..=100"));
+    }
+    Ok(())
+}
+
+/// Encode RGBA frames as an infinitely-looping GIF.
+///
+/// One global palette is quantized (NeuQuant) from pixels sampled across all
+/// frames; no dithering (dither noise defeats LZW compression on UI-style
+/// content); frames after the first are cropped to the bounding box of
+/// changed pixels. Per-frame delays derive from consecutive `times` deltas.
+fn encode_gif(
+    width: u32,
+    height: u32,
+    frames: &[Vec<u8>],
+    times: &[f64],
+    colors: u16,
+) -> PyResult<Vec<u8>> {
+    use std::collections::HashMap;
+
+    let (w, h) = (width as usize, height as usize);
+    let npx = w * h;
+
+    // Sample up to ~64k pixels evenly across all frames for the palette.
+    let total = npx * frames.len();
+    let step = (total / 65_536).max(1);
+    let mut samples = Vec::with_capacity((total / step + 1) * 4);
+    for i in (0..total).step_by(step) {
+        let (f, p) = (i / npx, i % npx);
+        let px = &frames[f][p * 4..p * 4 + 4];
+        samples.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    }
+    // Cap at 255 so the reserved transparent slot below still fits in a u8.
+    let nq = color_quant::NeuQuant::new(10, (colors as usize).min(255), &samples);
+    let mut palette_rgb: Vec<u8> = nq
+        .color_map_rgba()
+        .chunks_exact(4)
+        .flat_map(|c| [c[0], c[1], c[2]])
+        .collect();
+    // Reserve one extra palette slot as the inter-frame "unchanged" marker:
+    // pixels equal to the previous frame become this transparent index with
+    // disposal=Keep, which LZW compresses into long runs (the trick that
+    // makes UI animation GIFs small).
+    let transparent_idx = (palette_rgb.len() / 3) as u8;
+    palette_rgb.extend_from_slice(&[0, 0, 0]);
+
+    // Index frames through a color cache (UI renders have few unique colors).
+    let mut cache: HashMap<[u8; 3], u8> = HashMap::new();
+    let indexed: Vec<Vec<u8>> = frames
+        .iter()
+        .map(|frame| {
+            frame
+                .chunks_exact(4)
+                .map(|px| {
+                    let key = [px[0], px[1], px[2]];
+                    *cache
+                        .entry(key)
+                        .or_insert_with(|| nq.index_of(&[px[0], px[1], px[2], 255]) as u8)
+                })
+                .collect()
+        })
+        .collect();
+
+    // Delays in centiseconds from time deltas (loop-closing last delay).
+    let delay_cs = |dt: f64| ((dt * 100.0).round() as i64).clamp(2, u16::MAX as i64) as u16;
+    let delays: Vec<u16> = (0..frames.len())
+        .map(|i| {
+            if times.len() < 2 {
+                10
+            } else if i + 1 < times.len() {
+                delay_cs(times[i + 1] - times[i])
+            } else {
+                delay_cs(times[times.len() - 1] - times[times.len() - 2])
+            }
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut out, width as u16, height as u16, &palette_rgb)
+            .map_err(|e| PyValueError::new_err(format!("gif encoding failed: {e}")))?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .map_err(|e| PyValueError::new_err(format!("gif encoding failed: {e}")))?;
+
+        for (i, idx) in indexed.iter().enumerate() {
+            // Crop to the changed region (full frame for the first).
+            let (mut x0, mut y0, mut x1, mut y1) = (0usize, 0usize, w, h);
+            if i > 0 {
+                let prev = &indexed[i - 1];
+                let changed_rows: Vec<usize> = (0..h)
+                    .filter(|&y| idx[y * w..(y + 1) * w] != prev[y * w..(y + 1) * w])
+                    .collect();
+                match (changed_rows.first(), changed_rows.last()) {
+                    (Some(&top), Some(&bottom)) => {
+                        y0 = top;
+                        y1 = bottom + 1;
+                        x0 = w;
+                        x1 = 0;
+                        for &y in &changed_rows {
+                            for x in 0..w {
+                                if idx[y * w + x] != prev[y * w + x] {
+                                    x0 = x0.min(x);
+                                    x1 = x1.max(x + 1);
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Identical frame: emit a 1x1 patch to carry the delay.
+                        (x0, y0, x1, y1) = (0, 0, 1, 1);
+                    }
+                }
+            }
+            let (fw, fh) = (x1 - x0, y1 - y0);
+            let mut buffer = Vec::with_capacity(fw * fh);
+            for y in y0..y1 {
+                if i == 0 {
+                    buffer.extend_from_slice(&idx[y * w + x0..y * w + x1]);
+                } else {
+                    let prev = &indexed[i - 1];
+                    for x in x0..x1 {
+                        let p = y * w + x;
+                        buffer.push(if idx[p] == prev[p] {
+                            transparent_idx
+                        } else {
+                            idx[p]
+                        });
+                    }
+                }
+            }
+            let frame = gif::Frame {
+                delay: delays[i],
+                top: y0 as u16,
+                left: x0 as u16,
+                width: fw as u16,
+                height: fh as u16,
+                buffer: std::borrow::Cow::Owned(buffer),
+                transparent: if i == 0 { None } else { Some(transparent_idx) },
+                dispose: gif::DisposalMethod::Keep,
+                ..Default::default()
+            };
+            encoder
+                .write_frame(&frame)
+                .map_err(|e| PyValueError::new_err(format!("gif encoding failed: {e}")))?;
+        }
+    }
+    Ok(out)
+}
+
+fn validate_gif_args(times: &[f64], colors: u16) -> PyResult<()> {
+    if !(2..=256).contains(&colors) {
+        return Err(PyValueError::new_err("colors must be in 2..=256"));
+    }
+    validate_times(times)
 }
 
 /// Run `f` on a thread with a large explicit stack. Style and layout
@@ -605,20 +781,7 @@ fn render_frames<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    if times.is_empty() {
-        return Err(PyValueError::new_err("times must not be empty"));
-    }
-    if times.len() > MAX_FRAMES {
-        return Err(PyValueError::new_err(format!(
-            "at most {MAX_FRAMES} frames per call (got {})",
-            times.len()
-        )));
-    }
-    if times.iter().any(|t| !t.is_finite() || *t < 0.0) {
-        return Err(PyValueError::new_err(
-            "times must be finite and non-negative",
-        ));
-    }
+    validate_times(&times)?;
     let (w, h, frames) = py.detach(|| {
         with_render_stack(|| {
         render_frames_impl(
@@ -640,6 +803,158 @@ fn render_frames<'py>(
     Ok((w, h, frames))
 }
 
+/// Render an HTML string to a JPEG image, returned as `bytes`.
+///
+/// JPEG has no alpha channel — use an opaque `background` (the default).
+/// With `height=None` the canvas height is sized to the laid-out content.
+#[pyfunction]
+#[pyo3(signature = (html, *, width, height=None, quality=90, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[allow(clippy::too_many_arguments)]
+fn render_jpeg<'py>(
+    py: Python<'py>,
+    html: &str,
+    width: u32,
+    height: Option<u32>,
+    quality: u8,
+    scale: f32,
+    color_scheme: &str,
+    background: Option<&str>,
+    base_url: Option<String>,
+    fonts: Option<Vec<Vec<u8>>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+    css: Option<&str>,
+    css_vars: Option<std::collections::HashMap<String, String>>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    validate(width, height, scale)?;
+    validate_quality(quality)?;
+    let color_scheme = parse_color_scheme(color_scheme)?;
+    let background = parse_background(background)?;
+    let html = compose_html(html, css, css_vars)?;
+    let result = py.detach(|| -> PyResult<Vec<u8>> {
+        with_render_stack(|| {
+            let result = render_impl(
+                &html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts.unwrap_or_default(),
+                default_font_family,
+                allow_file_urls,
+            )?;
+            encode_jpeg(&result, quality)
+        })
+    })?;
+    Ok(PyBytes::new(py, &result))
+}
+
+/// Render CSS-animation frames and encode them as an infinitely-looping GIF.
+///
+/// Frame delays follow the spacing of `times`. One shared `colors`-entry
+/// palette, no dithering, delta-encoded frames — tuned for UI-style content.
+#[pyfunction]
+#[pyo3(signature = (html, *, width, height, times, colors=64, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[allow(clippy::too_many_arguments)]
+fn render_gif<'py>(
+    py: Python<'py>,
+    html: &str,
+    width: u32,
+    height: u32,
+    times: Vec<f64>,
+    colors: u16,
+    scale: f32,
+    color_scheme: &str,
+    background: Option<&str>,
+    base_url: Option<String>,
+    fonts: Option<Vec<Vec<u8>>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+    css: Option<&str>,
+    css_vars: Option<std::collections::HashMap<String, String>>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    validate(width, Some(height), scale)?;
+    validate_gif_args(&times, colors)?;
+    let color_scheme = parse_color_scheme(color_scheme)?;
+    let background = parse_background(background)?;
+    let html = compose_html(html, css, css_vars)?;
+    let gif = py.detach(|| -> PyResult<Vec<u8>> {
+        with_render_stack(|| {
+            let (w, h, frames) = render_frames_impl(
+                &html,
+                width,
+                height,
+                &times,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts.unwrap_or_default(),
+                default_font_family,
+                allow_file_urls,
+            )?;
+            encode_gif(w, h, &frames, &times, colors)
+        })
+    })?;
+    Ok(PyBytes::new(py, &gif))
+}
+
+/// Measure text with the same shaping engine and font collection used for
+/// rendering (Parley + bundled Inter + registered fonts) — one source of
+/// truth for layout math done in Python (ellipsis, fitting, wrapping).
+///
+/// Returns `(width, height)` in CSS pixels. `font_family` accepts a CSS
+/// font-family list (e.g. `"Inter, sans-serif"`). With `max_width` the text
+/// wraps and `height` reflects the wrapped line count.
+#[pyfunction]
+#[pyo3(signature = (text, *, font_size, font_family=None, font_weight=400.0, letter_spacing=0.0, max_width=None, fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn measure_text(
+    py: Python<'_>,
+    text: &str,
+    font_size: f32,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    max_width: Option<f32>,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<(f64, f64)> {
+    if !(font_size.is_finite() && font_size > 0.0) {
+        return Err(PyValueError::new_err("font_size must be a positive number"));
+    }
+    if !(1.0..=1000.0).contains(&font_weight) {
+        return Err(PyValueError::new_err("font_weight must be in 1..=1000"));
+    }
+    let family = font_family.unwrap_or("Inter").to_string();
+    let text = text.to_string();
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let mut collection = base_collection();
+        for font in fonts {
+            collection.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
+        }
+        let mut font_ctx = parley::FontContext {
+            collection,
+            source_cache: Default::default(),
+        };
+        let mut layout_ctx: parley::LayoutContext<[u8; 4]> = parley::LayoutContext::new();
+        let mut builder = layout_ctx.ranged_builder(&mut font_ctx, &text, 1.0, true);
+        builder.push_default(parley::StyleProperty::FontFamily(
+            parley::style::FontFamily::Source(std::borrow::Cow::Borrowed(family.as_str())),
+        ));
+        builder.push_default(parley::StyleProperty::FontSize(font_size));
+        builder.push_default(parley::StyleProperty::FontWeight(
+            parley::FontWeight::new(font_weight),
+        ));
+        builder.push_default(parley::StyleProperty::LetterSpacing(letter_spacing));
+        let mut layout = builder.build(&text);
+        layout.break_all_lines(max_width);
+        Ok((layout.width() as f64, layout.height() as f64))
+    })
+}
+
 enum TemplateCmd {
     SetText {
         id: String,
@@ -658,9 +973,22 @@ enum TemplateCmd {
         value: String,
         reply: std::sync::mpsc::Sender<Result<(), String>>,
     },
+    SetHtml {
+        id: String,
+        html: String,
+        reply: std::sync::mpsc::Sender<Result<(), String>>,
+    },
+    UpdateTexts {
+        updates: Vec<(String, String)>,
+        reply: std::sync::mpsc::Sender<Result<(), String>>,
+    },
     Render {
         time: f64,
         reply: std::sync::mpsc::Sender<RenderResult>,
+    },
+    RenderFrames {
+        times: Vec<f64>,
+        reply: std::sync::mpsc::Sender<(u32, u32, Vec<Vec<u8>>)>,
     },
 }
 
@@ -783,6 +1111,49 @@ impl TemplateWorker {
                     });
                     let _ = reply.send(result);
                 }
+                TemplateCmd::SetHtml { id, html, reply } => {
+                    let result = self.lookup(&id).map(|(node_id, _)| {
+                        blitz_dom::DocumentMutator::new(self.document.as_mut())
+                            .set_inner_html(node_id, &html);
+                        // The fragment may add or remove elements with ids
+                        // (including sole-text-child status of this element).
+                        self.id_map = build_id_map(self.document.as_ref());
+                    });
+                    let _ = reply.send(result);
+                }
+                TemplateCmd::UpdateTexts { updates, reply } => {
+                    // Validate every id before applying any, so a failed
+                    // batch leaves the document untouched.
+                    let mut nodes = Vec::with_capacity(updates.len());
+                    let mut error = None;
+                    for (id, text) in &updates {
+                        match self.lookup(id) {
+                            Ok((_, Some(text_node))) => nodes.push((text_node, text)),
+                            Ok((_, None)) => {
+                                error = Some(format!(
+                                    "element '{id}' does not contain exactly one text node"
+                                ));
+                                break;
+                            }
+                            Err(e) => {
+                                error = Some(e);
+                                break;
+                            }
+                        }
+                    }
+                    let result = match error {
+                        Some(e) => Err(e),
+                        None => {
+                            let mut mutator =
+                                blitz_dom::DocumentMutator::new(self.document.as_mut());
+                            for (text_node, text) in nodes {
+                                mutator.set_node_text(text_node, text);
+                            }
+                            Ok(())
+                        }
+                    };
+                    let _ = reply.send(result);
+                }
                 TemplateCmd::Render { time, reply } => {
                     self.document.as_mut().resolve(time);
                     let rgba = paint_frame(
@@ -797,6 +1168,20 @@ impl TemplateWorker {
                         width: self.physical_width,
                         height: self.physical_height,
                     });
+                }
+                TemplateCmd::RenderFrames { times, reply } => {
+                    let mut frames = Vec::with_capacity(times.len());
+                    for &t in &times {
+                        self.document.as_mut().resolve(t);
+                        frames.push(paint_frame(
+                            &mut self.document,
+                            self.scale,
+                            self.physical_width,
+                            self.physical_height,
+                            self.background,
+                        ));
+                    }
+                    let _ = reply.send((self.physical_width, self.physical_height, frames));
                 }
             }
         }
@@ -846,6 +1231,35 @@ impl Template {
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))
     }
+
+    fn request_frames(
+        &self,
+        py: Python<'_>,
+        times: Vec<f64>,
+    ) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.send(TemplateCmd::RenderFrames { times, reply: reply_tx })?;
+        py.detach(move || reply_rx.recv())
+            .map_err(|_| PyValueError::new_err("template worker has shut down"))
+    }
+}
+
+fn validate_times(times: &[f64]) -> PyResult<()> {
+    if times.is_empty() {
+        return Err(PyValueError::new_err("times must not be empty"));
+    }
+    if times.len() > MAX_FRAMES {
+        return Err(PyValueError::new_err(format!(
+            "at most {MAX_FRAMES} frames per call (got {})",
+            times.len()
+        )));
+    }
+    if times.iter().any(|t| !t.is_finite() || *t < 0.0) {
+        return Err(PyValueError::new_err(
+            "times must be finite and non-negative",
+        ));
+    }
+    Ok(())
 }
 
 #[pymethods]
@@ -952,6 +1366,71 @@ impl Template {
         self.mutate(py, |reply| TemplateCmd::SetAttr { id, name, value, reply })
     }
 
+    /// Replace the children of the element with the given `id` by parsing an
+    /// HTML fragment. Ids inside the replaced region are re-indexed.
+    fn set_html(&self, py: Python<'_>, id: &str, html: &str) -> PyResult<()> {
+        let (id, html) = (id.to_string(), html.to_string());
+        self.mutate(py, |reply| TemplateCmd::SetHtml { id, html, reply })
+    }
+
+    /// Batch text update: `tpl.update(temp="21.5°", hum="48%")` sets the text
+    /// of the elements with ids `temp` and `hum` in one round-trip.
+    /// Validates every id before applying — a failing batch changes nothing.
+    #[pyo3(signature = (**kwargs))]
+    fn update(&self, py: Python<'_>, kwargs: Option<Bound<'_, pyo3::types::PyDict>>) -> PyResult<()> {
+        let Some(kwargs) = kwargs else { return Ok(()) };
+        let mut updates = Vec::with_capacity(kwargs.len());
+        for (k, v) in kwargs.iter() {
+            updates.push((k.extract::<String>()?, v.extract::<String>()?));
+        }
+        if updates.is_empty() {
+            return Ok(());
+        }
+        self.mutate(py, |reply| TemplateCmd::UpdateTexts { updates, reply })
+    }
+
+    /// Render the current document state at multiple animation timestamps.
+    /// Returns `(width, height, [rgba_bytes, ...])`.
+    #[pyo3(signature = (*, times))]
+    fn render_frames<'py>(
+        &self,
+        py: Python<'py>,
+        times: Vec<f64>,
+    ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
+        validate_times(&times)?;
+        let (w, h, frames) = self.request_frames(py, times)?;
+        let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+        Ok((w, h, frames))
+    }
+
+    /// Render the current document state as an infinitely-looping GIF.
+    #[pyo3(signature = (*, times, colors=64))]
+    fn render_gif<'py>(
+        &self,
+        py: Python<'py>,
+        times: Vec<f64>,
+        colors: u16,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        validate_gif_args(&times, colors)?;
+        let (w, h, frames) = self.request_frames(py, times.clone())?;
+        let gif = py.detach(|| encode_gif(w, h, &frames, &times, colors))?;
+        Ok(PyBytes::new(py, &gif))
+    }
+
+    /// Render the current state to JPEG bytes. `time` is the animation clock.
+    #[pyo3(signature = (*, quality=90, time=0.0))]
+    fn render_jpeg<'py>(
+        &self,
+        py: Python<'py>,
+        quality: u8,
+        time: f64,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        validate_quality(quality)?;
+        let result = self.render(py, time)?;
+        let jpeg = py.detach(|| encode_jpeg(&result, quality))?;
+        Ok(PyBytes::new(py, &jpeg))
+    }
+
     /// Render the current state to PNG bytes. `time` is the animation clock.
     #[pyo3(signature = (*, time=0.0))]
     fn render_png<'py>(&self, py: Python<'py>, time: f64) -> PyResult<Bound<'py, PyBytes>> {
@@ -978,6 +1457,9 @@ fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_png, m)?)?;
     m.add_function(wrap_pyfunction!(render_rgba, m)?)?;
     m.add_function(wrap_pyfunction!(render_frames, m)?)?;
+    m.add_function(wrap_pyfunction!(render_jpeg, m)?)?;
+    m.add_function(wrap_pyfunction!(render_gif, m)?)?;
+    m.add_function(wrap_pyfunction!(measure_text, m)?)?;
     m.add_class::<Template>()?;
     Ok(())
 }

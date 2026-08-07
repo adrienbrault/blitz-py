@@ -308,6 +308,164 @@ class TestTemplate:
         assert all(r == results[0] for r in results)
 
 
+class TestJpeg:
+    def test_magic_and_size(self):
+        j = blitz_py.render_jpeg("<h1>hi</h1>", width=200, height=100)
+        assert j[:3] == b"\xff\xd8\xff"
+        lo = blitz_py.render_jpeg("<h1>hi</h1>", width=200, height=100, quality=10)
+        hi = blitz_py.render_jpeg("<h1>hi</h1>", width=200, height=100, quality=95)
+        assert len(lo) < len(hi)
+
+    def test_auto_height(self):
+        j = blitz_py.render_jpeg("<p style='margin:0;height:50px'>x</p>", width=100)
+        assert j[:3] == b"\xff\xd8\xff"
+
+    def test_bad_quality(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_jpeg("<p>x</p>", width=10, height=10, quality=0)
+
+    def test_template_jpeg(self):
+        tpl = blitz_py.Template("<p id='x'>hello</p>", width=100, height=40)
+        assert tpl.render_jpeg()[:3] == b"\xff\xd8\xff"
+
+
+GIF_ANIM = (
+    "<style>body{margin:0;background:#fff}"
+    ".b{width:20px;height:20px;background:#e11;animation:m 1s linear infinite}"
+    "@keyframes m{from{transform:translateX(0)}to{transform:translateX(60px)}}"
+    "</style><body><div class='b'></div></body>"
+)
+
+
+class TestGif:
+    def test_gif_structure(self):
+        g = blitz_py.render_gif(
+            GIF_ANIM, width=100, height=30, times=[i / 10 for i in range(10)]
+        )
+        assert g[:6] == b"GIF89a"
+        assert b"NETSCAPE2.0" in g[:1024]  # infinite loop extension
+
+    def test_gif_reasonable_size(self):
+        g = blitz_py.render_gif(
+            GIF_ANIM, width=100, height=30, times=[i / 10 for i in range(10)]
+        )
+        assert len(g) < 8_000
+
+    def test_gif_decodes_and_animates(self):
+        import io
+
+        PIL = pytest.importorskip("PIL.Image")
+        g = blitz_py.render_gif(
+            GIF_ANIM, width=100, height=30, times=[0.0, 0.5]
+        )
+        im = PIL.open(io.BytesIO(g))
+        assert im.n_frames == 2
+        f0 = im.convert("RGB").getpixel((5, 10))
+        im.seek(1)
+        f1 = im.convert("RGB").getpixel((5, 10))
+        assert f0 != f1  # box moved away from (5,10)
+
+    def test_colors_validation(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_gif("<p>x</p>", width=10, height=10, times=[0.0], colors=1)
+
+    def test_template_gif(self):
+        tpl = blitz_py.Template(GIF_ANIM, width=100, height=30)
+        g = tpl.render_gif(times=[0.0, 0.25, 0.5])
+        assert g[:6] == b"GIF89a"
+
+
+class TestMeasureText:
+    def test_monotone_in_length(self):
+        w1, h1 = blitz_py.measure_text("hello", font_size=16)
+        w2, h2 = blitz_py.measure_text("hello world, longer", font_size=16)
+        assert 0 < w1 < w2
+        assert h1 == h2 > 0
+
+    def test_scales_with_font_size(self):
+        w1, _ = blitz_py.measure_text("hello", font_size=16)
+        w2, _ = blitz_py.measure_text("hello", font_size=32)
+        assert w2 == pytest.approx(w1 * 2, rel=0.01)
+
+    def test_weight_widens(self):
+        w1, _ = blitz_py.measure_text("hello", font_size=16, font_weight=400)
+        w2, _ = blitz_py.measure_text("hello", font_size=16, font_weight=700)
+        assert w2 > w1
+
+    def test_wrapping_height(self):
+        text = "many words " * 20
+        _, h1 = blitz_py.measure_text(text, font_size=16)
+        _, h2 = blitz_py.measure_text(text, font_size=16, max_width=120.0)
+        assert h2 > h1 * 3
+
+    def test_agrees_with_rendering(self):
+        # A box exactly as wide as the measured text must fit it on one line;
+        # one 20% narrower must wrap to two. Verified via auto-height.
+        text = "The quick brown fox"
+        w, line_h = blitz_py.measure_text(text, font_size=16)
+        html = (
+            "<style>body{margin:0;font-family:sans-serif;font-size:16px}</style>"
+            f"<body><div style='width:{w + 1:.0f}px'>{text}</div>"
+        )
+        png_fit = blitz_py.render_png(html, width=400)
+        html2 = html.replace(f"width:{w + 1:.0f}px", f"width:{w * 0.8:.0f}px")
+        png_wrap = blitz_py.render_png(html2, width=400)
+        assert png_size(png_wrap)[1] > png_size(png_fit)[1]
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            blitz_py.measure_text("x", font_size=0)
+        with pytest.raises(ValueError):
+            blitz_py.measure_text("x", font_size=16, font_weight=0)
+
+
+class TestTemplateV3:
+    HTML = (
+        "<style>body{margin:0;background:#fff;font-family:sans-serif}</style>"
+        "<body><div id='list'><p id='row'>old row</p></div>"
+        "<p id='a'>aaa</p><p id='b'>bbb</p></body>"
+    )
+
+    def test_set_html_replaces_region(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=120)
+        before = tpl.render_png()
+        tpl.set_html(
+            "list",
+            "<div style='width:40px;height:12px;background:#00f'></div>" * 3,
+        )
+        after = tpl.render_png()
+        assert before != after
+
+    def test_set_html_new_ids_usable(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=120)
+        tpl.set_html("list", "<p id='fresh'>inserted</p>")
+        a = tpl.render_png()
+        tpl.set_text("fresh", "changed")
+        assert tpl.render_png() != a
+        # old id inside the replaced region is gone
+        with pytest.raises(ValueError):
+            tpl.set_text("row", "x")
+
+    def test_update_batch(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=120)
+        before = tpl.render_png()
+        tpl.update(a="AAA!", b="BBB!")
+        assert tpl.render_png() != before
+
+    def test_update_is_atomic(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=120)
+        before = tpl.render_png()
+        with pytest.raises(ValueError):
+            tpl.update(a="new", nosuchid="x")
+        assert tpl.render_png() == before
+
+    def test_render_frames_with_mutation(self):
+        tpl = blitz_py.Template(GIF_ANIM, width=100, height=30)
+        w, h, frames = tpl.render_frames(times=[0.0, 0.5])
+        assert (w, h) == (100, 30)
+        assert frames[0] != frames[1]
+
+
 ANIMATED_HTML = (
     "<style>body{margin:0;background:#fff}"
     ".b{width:20px;height:20px;background:#e11;animation:m 2s linear infinite}"

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 — 2026-08-07
+
+### Added
+- **Native `render_jpeg`** (module + `Template` method): ~0.5ms encode, `quality=` param — no Pillow round-trip.
+- **Native `render_gif`** (module + `Template` method): shared NeuQuant palette, no dithering, transparency-based inter-frame deltas — the 38-frame widget loop is ~16KB (smaller than the Pillow route) in one call.
+- **`Template.set_html(id, fragment)`**: replace an element's children with a parsed HTML fragment; ids inside the region are re-indexed.
+- **`Template.update(**id_to_text)`**: batch text updates in one worker round-trip; validated up-front, atomic on failure.
+- **`Template.render_frames(times=...)`**: animation frames from the current (mutated) document state — mutate between calls for data-driven animations.
+- **`measure_text(text, *, font_size, ...)`**: text measurement via the engine's own shaper (Parley + the rendering font collection) — one source of truth for Python-side ellipsis/fitting logic. Supports CSS font-family lists, weight, letter-spacing, and `max_width` wrapping.
+- README recipes: OG/social cards (with sample), email-HTML previews, exact-hash visual snapshot tests.
+- CI: musl wheels are now *tested* in an Alpine container (previously only built); `windows-aarch64` wheels added.
+- **armv7l wheels** (glibc + musl), best-effort, for frozen 32-bit Home Assistant installs on Pi 2/3 — outside the determinism CI's coverage.
+
 ## 0.2.0 — 2026-08-07
 
 ### Added

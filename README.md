@@ -27,7 +27,9 @@ Unedited `render_png` output: a [Tailwind v4](examples/tailwind_dashboard.html) 
 pip install blitz-py
 ```
 
-Prebuilt wheels (abi3, Python ≥ 3.10): Linux glibc + musl (x86_64, aarch64), macOS (arm64, x86_64), Windows (x64).
+Prebuilt wheels (abi3, Python ≥ 3.10): Linux glibc + musl (x86_64, aarch64, armv7l), macOS (arm64, x86_64), Windows (x64, arm64).
+
+armv7l (32-bit ARM, e.g. frozen pre-2026 Home Assistant installs on Pi 2/3) is built best-effort: it gets the same test suite via the sdist path but is not covered by the cross-platform determinism check.
 
 ## Usage
 
@@ -75,23 +77,17 @@ Everything above is Tailwind classes + CSS `@keyframes` ([source](examples/missi
 CSS animations are evaluated on a deterministic clock: `render_frames` renders the document at any list of timestamps (seconds), and Pillow assembles the GIF. Frames after the first reuse the parsed document, so they're fast — ~1ms per 240×240 frame:
 
 ```python
-from PIL import Image
-
 fps, seconds = 12, 3.2
-w, h, frames = blitz_py.render_frames(
+gif = blitz_py.render_gif(
     html, width=240, height=240,
     times=[i / fps for i in range(int(fps * seconds))],
 )
-rgbs = [Image.frombytes("RGBA", (w, h), f).convert("RGB") for f in frames]
-base = rgbs[0].quantize(colors=64, dither=Image.Dither.NONE)
-imgs = [im.quantize(colors=64, palette=base, dither=Image.Dither.NONE) for im in rgbs]
-imgs[0].save("widget.gif", save_all=True, append_images=imgs[1:],
-             duration=int(1000 / fps), loop=0, optimize=True)
+open("widget.gif", "wb").write(gif)   # ~16KB, encoded natively in ~20ms
 ```
 
-Anything `@keyframes` can express — transforms, opacity, colors — loops perfectly because you control the clock. See [examples/animated_widget.py](examples/animated_widget.py).
+Anything `@keyframes` can express — transforms, opacity, colors — loops perfectly because you control the clock. The encoder uses one shared palette (`colors=64` by default), no dithering, and transparency-based inter-frame deltas — the combination that keeps UI-animation GIFs small. Frame delays follow the spacing of `times`. See [examples/animated_widget.py](examples/animated_widget.py).
 
-File-size tips (a 3.2s 240×240 widget loop, measured): one **shared palette** across frames and **no dithering** matter most — both per-frame palettes and dither noise defeat GIF's delta/LZW compression. Naive 20fps/256-color/dithered ≈ 163KB; 20fps/64-color shared/no-dither ≈ 26KB; 12fps ≈ 18KB; 8fps/32 colors ≈ 11KB. Flat-color UI animation quantizes to 64 colors with no visible loss; gradients are what eat palette entries.
+Need custom encoding (dithering, APNG/WebP, per-frame palettes)? `render_frames` returns raw RGBA frames for Pillow/ffmpeg.
 
 ## Fast repeated renders: `Template`
 
@@ -99,24 +95,70 @@ For dashboards and device widgets that re-render the same document with fresh da
 
 ```python
 tpl = blitz_py.Template(html, width=240, height=240)
-tpl.set_text("temp", "21.5°")            # element must hold one text node
+tpl.update(temp="21.5°", hum="48%")       # batch text update, one round-trip, atomic
+tpl.set_html("alerts", "".join(f"<li>{a}</li>" for a in alerts))  # re-render a region
 tpl.set_style("bar", "width", "62%")
 tpl.set_attribute("icon", "src", data_uri)
-png = tpl.render_png()                    # ~0.4ms — 3x faster than one-shot
-frame = tpl.render_png(time=0.5)          # animation clock also available
+jpeg = tpl.render_jpeg(quality=90)        # ~0.5ms — straight to the device
+gif = tpl.render_gif(times=[i/12 for i in range(38)])  # animated, current data
 ```
 
 Templates are safe to share across threads (the document lives on its own worker thread), and renders release the GIL — 4 rendering threads get ~3.5× throughput.
 
+## Recipes
+
+**OG / social cards** — deterministic, ~6ms per 1200×630 card, no Chromium to babysit:
+
+<p align="center"><img src="docs/samples/sample_og.png" width="560" alt="OG card sample"></p>
+
+```python
+card = blitz_py.render_png(OG_TEMPLATE, width=1200, height=630,
+                           css_vars={"title": post.title, "kicker": post.tag})
+```
+
+**Email-HTML previews** — auto-height gives you the full message at client width:
+
+```python
+png = blitz_py.render_png(email_html, width=600)   # height=None → sized to content
+```
+
+**Visual snapshot tests** — renders are byte-identical across platforms (CI-verified), so hashes are stable:
+
+```python
+def test_widget_looks_right():
+    png = blitz_py.render_png(widget_html, width=240, height=240)
+    assert hashlib.sha256(png).hexdigest() == "9d62e494..."  # exact, on every OS
+```
+
+**Device dashboards** (the original use case) — `Template` + `render_jpeg`/`render_gif` for sub-millisecond updates pushed to small displays.
+
 ## API
 
-Three functions and a class, same keyword arguments:
+Six functions and a class, same keyword arguments:
 
 ```python
 render_png(html, *, width, height=None, ...) -> bytes       # PNG; height=None → content height
+render_jpeg(html, *, width, height=None, quality=90, ...) -> bytes  # JPEG (opaque background)
 render_rgba(html, *, width, height=None, ...) -> (w, h, bytes)   # raw RGBA pixels
 render_frames(html, *, width, height, times, ...) -> (w, h, [bytes, ...])  # animation frames
+render_gif(html, *, width, height, times, colors=64, ...) -> bytes  # looping GIF, native encoder
 Template(html, *, width, height, ...)                       # parse once, re-render fast
+```
+
+`Template` methods: `set_text(id, text)` · `update(**id_to_text)` (batch, atomic) · `set_html(id, fragment)` (replace a region, new ids indexed) · `set_style(id, prop, value)` · `set_attribute(id, name, value)` · `render_png/jpeg/rgba(time=...)` · `render_frames(times=...)` · `render_gif(times=..., colors=...)`
+
+### Text measurement
+
+`measure_text` exposes the engine's own shaper (Parley + the same font collection used for rendering), so Python-side fitting logic — ellipsis, autoscaling, wrapping estimates — uses the *same metrics the renderer will use*, instead of a second font system that drifts:
+
+```python
+w, h = blitz_py.measure_text("Living room temperature", font_size=16, font_weight=600)
+_, wrapped_h = blitz_py.measure_text(long_text, font_size=14, max_width=208.0)
+
+def ellipsize(text, max_w, **kw):
+    while text and blitz_py.measure_text(text + "…", **kw)[0] > max_w:
+        text = text[:-1]
+    return text + "…"
 ```
 
 | Argument | Default | Meaning |

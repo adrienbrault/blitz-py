@@ -77,6 +77,14 @@ jobs:
           - target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
             name: musllinux-aarch64
+          # 32-bit ARM: frozen pre-2026 Home Assistant installs on Pi 2/3.
+          # Best-effort — not covered by the determinism CI.
+          - target: armv7-unknown-linux-gnueabihf
+            manylinux: auto
+            name: manylinux-armv7l
+          - target: armv7-unknown-linux-musleabihf
+            manylinux: musllinux_1_2
+            name: musllinux-armv7l
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
@@ -89,6 +97,21 @@ jobs:
         with:
           name: wheels-${{ matrix.name }}
           path: dist
+
+  musl-test:
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-musllinux-x86_64
+          path: dist
+      - name: Test the musl wheel in Alpine
+        run: |
+          docker run --rm -v "$PWD":/io -w /io python:3.12-alpine sh -c '
+            pip install -q dist/*.whl pytest
+            python -m pytest tests/ -q'
 
   macos-wheels:
     runs-on: macos-latest
@@ -110,16 +133,20 @@ jobs:
 
   windows-wheels:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x64, aarch64-pc-windows-msvc]
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
         with:
-          target: x64
+          target: ${{ matrix.target }}
           args: --release --out dist
           sccache: "true"
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-x64
+          name: wheels-windows-${{ matrix.target }}
           path: dist
 
   sdist:
@@ -137,7 +164,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, linux-wheels, macos-wheels, windows-wheels, sdist]
+    needs: [test, linux-wheels, musl-test, macos-wheels, windows-wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

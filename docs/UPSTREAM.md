@@ -11,6 +11,8 @@ Engine behaviors discovered while building blitz-py, against `blitz 0.3.0-beta.1
 | `DocumentMutator::set_style_property` doesn't invalidate layout | blitz-dom 0.3.0-beta.1 | `Template.set_style` rewrites the `style` attribute instead | Fixed on main (#582), unreleased |
 | Bundled font family naming: fontique registers fonts under internal name (`"Inter Variable"`), so name-based defaults can silently bind to a system font or nothing | fontique | Register with `FontInfoOverride { family_name }` and wire generics by `FamilyId` | Working as designed; gotcha documented |
 
+Worth contributing upstream when we engage: `text-overflow: ellipsis` support in blitz-dom — currently consumers re-implement truncation in application code; `measure_text` (v0.3.0) removes the metric-mismatch pain but native ellipsis is the real fix.
+
 Also relevant but not engine bugs:
 
 - `anyrender_vello_cpu` 0.15 requires `anyrender` 0.12, incompatible with `blitz-paint 0.3.0-beta.1` (needs 0.11) — pin 0.14 until the next blitz release.
