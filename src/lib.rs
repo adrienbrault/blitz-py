@@ -60,9 +60,8 @@ fn parse_color_scheme(s: &str) -> PyResult<ColorScheme> {
     }
 }
 
-/// Parse a `#rgb`/`#rrggbb`/`#rrggbbaa` color, or None for transparent.
-fn parse_background(s: Option<&str>) -> PyResult<Option<blitz_dom::util::Color>> {
-    let Some(s) = s else { return Ok(None) };
+/// Parse a `#rgb`/`#rrggbb`/`#rrggbbaa` color into RGBA components.
+fn parse_hex_rgba(s: &str) -> PyResult<(u8, u8, u8, u8)> {
     let hex = s.strip_prefix('#').unwrap_or(s);
     if !hex.is_ascii() {
         // Byte-offset slicing below requires ASCII; anything else is not a
@@ -91,6 +90,13 @@ fn parse_background(s: Option<&str>) -> PyResult<Option<blitz_dom::util::Color>>
             )));
         }
     };
+    Ok((r, g, b, a))
+}
+
+/// Parse an optional color, `None` meaning transparent.
+fn parse_background(s: Option<&str>) -> PyResult<Option<blitz_dom::util::Color>> {
+    let Some(s) = s else { return Ok(None) };
+    let (r, g, b, a) = parse_hex_rgba(s)?;
     Ok(Some(blitz_dom::util::Color::from_rgba8(r, g, b, a)))
 }
 
@@ -209,7 +215,7 @@ fn set_default_family(collection: &mut parley::fontique::Collection, family: &st
 /// fresh collection each render both repeats the system-font scan and leaks
 /// (~120KB/call in fontique 0.10's platform scan), which matters for
 /// long-running processes.
-fn base_collection() -> parley::fontique::Collection {
+fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
     use parley::fontique::{Blob, Collection, CollectionOptions};
     static BASE: OnceLock<Mutex<Collection>> = OnceLock::new();
     BASE.get_or_init(|| {
@@ -233,9 +239,369 @@ fn base_collection() -> parley::fontique::Collection {
         set_default_ids(&mut collection, &ids);
         Mutex::new(collection)
     })
-    .lock()
-    .expect("font collection lock poisoned")
-    .clone()
+}
+
+fn base_collection() -> parley::fontique::Collection {
+    base_mutex()
+        .lock()
+        .expect("font collection lock poisoned")
+        .clone()
+}
+
+/// Register fonts process-wide: every later render/measure sees them without
+/// passing bytes per call. Returns the family names registered. Optionally
+/// makes one family the default (generic families + Latin fallback).
+///
+/// Global mutable state: for deterministic output, register at startup,
+/// before rendering.
+#[pyfunction]
+#[pyo3(signature = (fonts, *, default_family=None))]
+fn register_fonts(
+    py: Python<'_>,
+    fonts: Vec<Vec<u8>>,
+    default_family: Option<String>,
+) -> PyResult<Vec<String>> {
+    py.detach(move || {
+        let mut base = base_mutex()
+            .lock()
+            .map_err(|_| PyValueError::new_err("font collection lock poisoned"))?;
+        let mut names = Vec::new();
+        for font in fonts {
+            let registered =
+                base.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
+            for (id, _) in registered {
+                if let Some(name) = base.family_name(id) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+        if let Some(family) = default_family {
+            if !set_default_family(&mut base, &family) {
+                return Err(PyValueError::new_err(format!(
+                    "default_family '{family}' not found among registered or system fonts"
+                )));
+            }
+        }
+        Ok(names)
+    })
+}
+
+/// Build a Parley layout for the text-utility functions.
+fn text_layout(
+    text: &str,
+    family: &str,
+    font_size: f32,
+    font_weight: f32,
+    letter_spacing: f32,
+    max_width: Option<f32>,
+    fonts: &[Vec<u8>],
+) -> parley::Layout<[u8; 4]> {
+    let mut collection = base_collection();
+    for font in fonts {
+        collection.register_fonts(parley::fontique::Blob::new(Arc::new(font.clone())), None);
+    }
+    let mut font_ctx = parley::FontContext {
+        collection,
+        source_cache: Default::default(),
+    };
+    let mut layout_ctx: parley::LayoutContext<[u8; 4]> = parley::LayoutContext::new();
+    let mut builder = layout_ctx.ranged_builder(&mut font_ctx, text, 1.0, true);
+    builder.push_default(parley::StyleProperty::FontFamily(
+        parley::style::FontFamily::Source(std::borrow::Cow::Borrowed(family)),
+    ));
+    builder.push_default(parley::StyleProperty::FontSize(font_size));
+    builder.push_default(parley::StyleProperty::FontWeight(parley::FontWeight::new(
+        font_weight,
+    )));
+    builder.push_default(parley::StyleProperty::LetterSpacing(letter_spacing));
+    let mut layout = builder.build(text);
+    layout.break_all_lines(max_width);
+    layout
+}
+
+fn validate_text_style(font_size: f32, font_weight: f32) -> PyResult<()> {
+    if !(font_size.is_finite() && font_size > 0.0) {
+        return Err(PyValueError::new_err("font_size must be a positive number"));
+    }
+    if !(1.0..=1000.0).contains(&font_weight) {
+        return Err(PyValueError::new_err("font_weight must be in 1..=1000"));
+    }
+    Ok(())
+}
+
+/// Per-line metrics of wrapped text: list of `(width, height)` per line.
+#[pyfunction]
+#[pyo3(signature = (text, *, font_size, max_width=None, font_family=None, font_weight=400.0, letter_spacing=0.0, fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn measure_text_lines(
+    py: Python<'_>,
+    text: &str,
+    font_size: f32,
+    max_width: Option<f32>,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<Vec<(f64, f64)>> {
+    validate_text_style(font_size, font_weight)?;
+    let family = font_family.unwrap_or("Inter").to_string();
+    let text = text.to_string();
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let layout = text_layout(
+            &text,
+            &family,
+            font_size,
+            font_weight,
+            letter_spacing,
+            max_width,
+            &fonts,
+        );
+        Ok(layout
+            .lines()
+            .map(|line| {
+                let m = line.metrics();
+                (m.advance as f64, m.line_height as f64)
+            })
+            .collect())
+    })
+}
+
+/// Truncate `text` with an ellipsis so it fits in `max_width` on one line.
+/// Uses the engine's own shaper, so the result is exact for rendering.
+#[pyfunction]
+#[pyo3(signature = (text, *, max_width, font_size, font_family=None, font_weight=400.0, letter_spacing=0.0, ellipsis="…", fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn ellipsize(
+    py: Python<'_>,
+    text: &str,
+    max_width: f32,
+    font_size: f32,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    ellipsis: &str,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<String> {
+    validate_text_style(font_size, font_weight)?;
+    let family = font_family.unwrap_or("Inter").to_string();
+    let (text, ellipsis) = (text.to_string(), ellipsis.to_string());
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let width = |s: &str| {
+            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+        };
+        if width(&text) <= max_width {
+            return Ok(text);
+        }
+        let chars: Vec<char> = text.chars().collect();
+        // Largest prefix such that prefix+ellipsis fits.
+        let (mut lo, mut hi) = (0usize, chars.len());
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate: String = chars[..mid].iter().collect::<String>() + &ellipsis;
+            if width(candidate.trim_end()) <= max_width {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        let prefix: String = chars[..lo].iter().collect();
+        Ok(prefix.trim_end().to_string() + &ellipsis)
+    })
+}
+
+/// Truncate `text` with an ellipsis so it wraps to at most `max_lines` lines
+/// of `max_width` (a `-webkit-line-clamp` equivalent, computed up front).
+#[pyfunction]
+#[pyo3(signature = (text, *, max_width, max_lines, font_size, font_family=None, font_weight=400.0, letter_spacing=0.0, ellipsis="…", fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn line_clamp(
+    py: Python<'_>,
+    text: &str,
+    max_width: f32,
+    max_lines: usize,
+    font_size: f32,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    ellipsis: &str,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<String> {
+    validate_text_style(font_size, font_weight)?;
+    if max_lines == 0 {
+        return Err(PyValueError::new_err("max_lines must be > 0"));
+    }
+    let family = font_family.unwrap_or("Inter").to_string();
+    let (text, ellipsis) = (text.to_string(), ellipsis.to_string());
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let line_count = |s: &str| {
+            text_layout(
+                s,
+                &family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                Some(max_width),
+                &fonts,
+            )
+            .lines()
+            .count()
+        };
+        if line_count(&text) <= max_lines {
+            return Ok(text);
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let (mut lo, mut hi) = (0usize, chars.len());
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate: String =
+                chars[..mid].iter().collect::<String>().trim_end().to_string() + &ellipsis;
+            if line_count(&candidate) <= max_lines {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        let prefix: String = chars[..lo].iter().collect();
+        Ok(prefix.trim_end().to_string() + &ellipsis)
+    })
+}
+
+/// Largest font size in `[min_size, max_size]` at which `text` fits
+/// `max_width` (single line), or — with `wrap=True` and `max_height` — fits
+/// the box when wrapped. The SwiftUI `minimumScaleFactor` pattern.
+#[pyfunction]
+#[pyo3(signature = (text, *, max_width, max_size, min_size=6.0, max_height=None, wrap=false, font_family=None, font_weight=400.0, letter_spacing=0.0, fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn fit_font_size(
+    py: Python<'_>,
+    text: &str,
+    max_width: f32,
+    max_size: f32,
+    min_size: f32,
+    max_height: Option<f32>,
+    wrap: bool,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<f64> {
+    validate_text_style(max_size, font_weight)?;
+    if !(min_size > 0.0 && min_size <= max_size) {
+        return Err(PyValueError::new_err("need 0 < min_size <= max_size"));
+    }
+    if wrap && max_height.is_none() {
+        return Err(PyValueError::new_err("wrap=True requires max_height"));
+    }
+    let family = font_family.unwrap_or("Inter").to_string();
+    let text = text.to_string();
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let fits = |size: f32| {
+            let layout = text_layout(
+                &text,
+                &family,
+                size,
+                font_weight,
+                letter_spacing,
+                if wrap { Some(max_width) } else { None },
+                &fonts,
+            );
+            let width_ok = layout.width() <= max_width;
+            let height_ok = max_height.is_none_or(|h| layout.height() <= h);
+            width_ok && height_ok
+        };
+        let (mut lo, mut hi) = (min_size, max_size);
+        if fits(hi) {
+            return Ok(hi as f64);
+        }
+        // Binary search to 0.25px granularity.
+        while hi - lo > 0.25 {
+            let mid = (lo + hi) / 2.0;
+            if fits(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Ok(lo as f64)
+    })
+}
+
+/// Break `text` into balanced lines fitting `max_width` (the
+/// `text-wrap: balance` behavior): uses the minimum line count, then evens
+/// the lines out. Returns the lines; join with `<br>` in HTML.
+#[pyfunction]
+#[pyo3(signature = (text, *, max_width, font_size, font_family=None, font_weight=400.0, letter_spacing=0.0, fonts=None))]
+#[allow(clippy::too_many_arguments)]
+fn wrap_balanced(
+    py: Python<'_>,
+    text: &str,
+    max_width: f32,
+    font_size: f32,
+    font_family: Option<&str>,
+    font_weight: f32,
+    letter_spacing: f32,
+    fonts: Option<Vec<Vec<u8>>>,
+) -> PyResult<Vec<String>> {
+    validate_text_style(font_size, font_weight)?;
+    let family = font_family.unwrap_or("Inter").to_string();
+    let text = text.to_string();
+    let fonts = fonts.unwrap_or_default();
+    py.detach(move || {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.is_empty() {
+            return Ok(vec![]);
+        }
+        let measure = |s: &str| {
+            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+        };
+        // Greedy break at a given width; None if any single word overflows.
+        let greedy = |limit: f32| -> Option<Vec<String>> {
+            let mut lines: Vec<String> = Vec::new();
+            let mut current = String::new();
+            for word in &words {
+                if measure(word) > limit {
+                    return None;
+                }
+                let candidate = if current.is_empty() {
+                    (*word).to_string()
+                } else {
+                    format!("{current} {word}")
+                };
+                if measure(&candidate) <= limit {
+                    current = candidate;
+                } else {
+                    lines.push(std::mem::take(&mut current));
+                    current = (*word).to_string();
+                }
+            }
+            lines.push(current);
+            Some(lines)
+        };
+        let Some(base) = greedy(max_width) else {
+            // A single word wider than the box: return greedy-per-word.
+            return Ok(words.iter().map(|w| w.to_string()).collect());
+        };
+        let target_lines = base.len();
+        if target_lines == 1 {
+            return Ok(base);
+        }
+        // Shrink the width until the line count would grow; the narrowest
+        // width preserving the count gives the most balanced fill.
+        let longest_word = words.iter().map(|w| measure(w)).fold(0.0f32, f32::max);
+        let (mut lo, mut hi) = (longest_word, max_width);
+        for _ in 0..20 {
+            let mid = (lo + hi) / 2.0;
+            match greedy(mid) {
+                Some(lines) if lines.len() <= target_lines => hi = mid,
+                _ => lo = mid,
+            }
+        }
+        Ok(greedy(hi).unwrap_or(base))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -990,6 +1356,13 @@ enum TemplateCmd {
         times: Vec<f64>,
         reply: std::sync::mpsc::Sender<(u32, u32, Vec<Vec<u8>>)>,
     },
+    GetBox {
+        id: String,
+        reply: std::sync::mpsc::Sender<Result<(f64, f64, f64, f64), String>>,
+    },
+    Boxes {
+        reply: std::sync::mpsc::Sender<Vec<(String, (f64, f64, f64, f64))>>,
+    },
 }
 
 /// Walk the tree collecting `id` attributes and, per element, its single
@@ -1060,6 +1433,30 @@ impl TemplateWorker {
             .get(id)
             .copied()
             .ok_or_else(|| format!("no element with id '{id}'"))
+    }
+
+    /// Absolute laid-out rect of a node in CSS pixels (post-resolve).
+    fn abs_box(&self, node_id: usize) -> (f64, f64, f64, f64) {
+        let doc = self.document.as_ref();
+        let Some(node) = doc.get_node(node_id) else {
+            return (0.0, 0.0, 0.0, 0.0);
+        };
+        let (mut x, mut y) = (
+            node.final_layout.location.x as f64,
+            node.final_layout.location.y as f64,
+        );
+        let (w, h) = (
+            node.final_layout.size.width as f64,
+            node.final_layout.size.height as f64,
+        );
+        let mut current = node.parent;
+        while let Some(parent_id) = current {
+            let Some(parent) = doc.get_node(parent_id) else { break };
+            x += parent.final_layout.location.x as f64;
+            y += parent.final_layout.location.y as f64;
+            current = parent.parent;
+        }
+        (x, y, w, h)
     }
 
     fn run(mut self, rx: std::sync::mpsc::Receiver<TemplateCmd>) {
@@ -1182,6 +1579,20 @@ impl TemplateWorker {
                         ));
                     }
                     let _ = reply.send((self.physical_width, self.physical_height, frames));
+                }
+                TemplateCmd::GetBox { id, reply } => {
+                    self.document.as_mut().resolve(0.0);
+                    let result = self.lookup(&id).map(|(node_id, _)| self.abs_box(node_id));
+                    let _ = reply.send(result);
+                }
+                TemplateCmd::Boxes { reply } => {
+                    self.document.as_mut().resolve(0.0);
+                    let boxes = self
+                        .id_map
+                        .iter()
+                        .map(|(id, (node_id, _))| (id.clone(), self.abs_box(*node_id)))
+                        .collect();
+                    let _ = reply.send(boxes);
                 }
             }
         }
@@ -1431,6 +1842,31 @@ impl Template {
         Ok(PyBytes::new(py, &jpeg))
     }
 
+    /// Final laid-out rect of the element with this `id`, as
+    /// `(x, y, width, height)` in CSS pixels.
+    fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<(f64, f64, f64, f64)> {
+        let id = id.to_string();
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.send(TemplateCmd::GetBox { id, reply: reply_tx })?;
+        py.detach(move || reply_rx.recv())
+            .map_err(|_| PyValueError::new_err("template worker has shut down"))?
+            .map_err(PyValueError::new_err)
+    }
+
+    /// Laid-out rects of every element with an `id`, as
+    /// `{id: (x, y, width, height)}` in CSS pixels.
+    fn boxes(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<std::collections::HashMap<String, (f64, f64, f64, f64)>> {
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.send(TemplateCmd::Boxes { reply: reply_tx })?;
+        let boxes = py
+            .detach(move || reply_rx.recv())
+            .map_err(|_| PyValueError::new_err("template worker has shut down"))?;
+        Ok(boxes.into_iter().collect())
+    }
+
     /// Render the current state to PNG bytes. `time` is the animation clock.
     #[pyo3(signature = (*, time=0.0))]
     fn render_png<'py>(&self, py: Python<'py>, time: f64) -> PyResult<Bound<'py, PyBytes>> {
@@ -1451,6 +1887,372 @@ impl Template {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Layered compositing: render several documents/templates into one surface.
+
+enum LayerJob {
+    Html {
+        html: String,
+        width: u32,
+        height: u32,
+        scale: f32,
+        color_scheme: ColorScheme,
+        background: Option<blitz_dom::util::Color>,
+        base_url: Option<String>,
+        fonts: Vec<Vec<u8>>,
+        default_font_family: Option<String>,
+        allow_file_urls: bool,
+        time: f64,
+    },
+    Tpl {
+        sender: std::sync::mpsc::Sender<TemplateCmd>,
+        time: f64,
+    },
+}
+
+struct LayerSpec {
+    job: LayerJob,
+    x: i64,
+    y: i64,
+    opacity: f32,
+    blur: f32,
+    tint: Option<(u8, u8, u8)>,
+}
+
+fn dict_get<'py, T: for<'a> pyo3::FromPyObject<'a, 'py>>(
+    dict: &Bound<'py, pyo3::types::PyDict>,
+    key: &str,
+) -> PyResult<Option<T>> {
+    match dict.get_item(key)? {
+        Some(v) if !v.is_none() => Ok(Some(v.extract::<T>().map_err(|_| {
+            PyValueError::new_err(format!("layer key '{key}' has an invalid type"))
+        })?)),
+        _ => Ok(None),
+    }
+}
+
+fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<LayerSpec>> {
+    let mut specs = Vec::with_capacity(layers.len());
+    for dict in layers {
+        let x: i64 = dict_get(dict, "x")?.unwrap_or(0);
+        let y: i64 = dict_get(dict, "y")?.unwrap_or(0);
+        let opacity: f32 = dict_get(dict, "opacity")?.unwrap_or(1.0);
+        if !(0.0..=1.0).contains(&opacity) {
+            return Err(PyValueError::new_err("layer opacity must be in 0..=1"));
+        }
+        let blur: f32 = dict_get(dict, "blur")?.unwrap_or(0.0);
+        if !(0.0..=100.0).contains(&blur) {
+            return Err(PyValueError::new_err("layer blur must be in 0..=100 px"));
+        }
+        let tint = match dict_get::<String>(dict, "tint")? {
+            Some(hex) => {
+                let (r, g, b, _) = parse_hex_rgba(&hex)?;
+                Some((r, g, b))
+            }
+            None => None,
+        };
+        let time: f64 = dict_get(dict, "time")?.unwrap_or(0.0);
+
+        let template: Option<Bound<'_, Template>> = match dict.get_item("template")? {
+            Some(v) if !v.is_none() => Some(v.downcast_into::<Template>().map_err(|_| {
+                PyValueError::new_err("layer 'template' must be a blitz_py.Template")
+            })?),
+            _ => None,
+        };
+        let html: Option<String> = dict_get(dict, "html")?;
+        let job = match (template, html) {
+            (Some(tpl), None) => {
+                let sender = tpl
+                    .borrow()
+                    .tx
+                    .lock()
+                    .map_err(|_| PyValueError::new_err("template lock poisoned"))?
+                    .clone();
+                LayerJob::Tpl { sender, time }
+            }
+            (None, Some(html)) => {
+                let width: u32 = dict_get(dict, "width")?
+                    .ok_or_else(|| PyValueError::new_err("html layer requires 'width'"))?;
+                let height: u32 = dict_get(dict, "height")?
+                    .ok_or_else(|| PyValueError::new_err("html layer requires 'height'"))?;
+                let scale: f32 = dict_get(dict, "scale")?.unwrap_or(1.0);
+                validate(width, Some(height), scale)?;
+                let color_scheme =
+                    parse_color_scheme(&dict_get::<String>(dict, "color_scheme")?
+                        .unwrap_or_else(|| "light".into()))?;
+                // Layers default to a transparent background so they stack.
+                let background =
+                    parse_background(dict_get::<String>(dict, "background")?.as_deref())?;
+                let css: Option<String> = dict_get(dict, "css")?;
+                let css_vars: Option<std::collections::HashMap<String, String>> =
+                    dict_get(dict, "css_vars")?;
+                let html = compose_html(&html, css.as_deref(), css_vars)?;
+                LayerJob::Html {
+                    html,
+                    width,
+                    height,
+                    scale,
+                    color_scheme,
+                    background,
+                    base_url: dict_get(dict, "base_url")?,
+                    fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
+                    default_font_family: dict_get(dict, "default_font_family")?,
+                    allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                    time,
+                }
+            }
+            (Some(_), Some(_)) => {
+                return Err(PyValueError::new_err(
+                    "layer must have either 'template' or 'html', not both",
+                ));
+            }
+            (None, None) => {
+                return Err(PyValueError::new_err(
+                    "layer requires a 'template' or 'html' key",
+                ));
+            }
+        };
+        specs.push(LayerSpec { job, x, y, opacity, blur, tint });
+    }
+    Ok(specs)
+}
+
+/// Three-pass box blur (≈ gaussian), separable, on premultiplied RGBA.
+fn box_blur(buf: &mut [u8], w: usize, h: usize, radius: f32) {
+    let r = radius.round() as usize;
+    if r == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let mut tmp = vec![0u8; buf.len()];
+    for _ in 0..3 {
+        // Horizontal pass buf -> tmp
+        for y in 0..h {
+            let row = y * w;
+            let mut sums = [0u32; 4];
+            let window = |x: isize| -> usize { (row + x.clamp(0, w as isize - 1) as usize) * 4 };
+            for x in -(r as isize)..=(r as isize) {
+                let p = window(x);
+                for c in 0..4 {
+                    sums[c] += buf[p + c] as u32;
+                }
+            }
+            let count = (2 * r + 1) as u32;
+            for x in 0..w {
+                let out = (row + x) * 4;
+                for c in 0..4 {
+                    tmp[out + c] = (sums[c] / count) as u8;
+                }
+                let leaving = window(x as isize - r as isize);
+                let entering = window(x as isize + r as isize + 1);
+                for c in 0..4 {
+                    sums[c] = sums[c] + buf[entering + c] as u32 - buf[leaving + c] as u32;
+                }
+            }
+        }
+        // Vertical pass tmp -> buf
+        for x in 0..w {
+            let mut sums = [0u32; 4];
+            let window = |y: isize| -> usize {
+                (y.clamp(0, h as isize - 1) as usize * w + x) * 4
+            };
+            for y in -(r as isize)..=(r as isize) {
+                let p = window(y);
+                for c in 0..4 {
+                    sums[c] += tmp[p + c] as u32;
+                }
+            }
+            let count = (2 * r + 1) as u32;
+            for y in 0..h {
+                let out = (y * w + x) * 4;
+                for c in 0..4 {
+                    buf[out + c] = (sums[c] / count) as u8;
+                }
+                let leaving = window(y as isize - r as isize);
+                let entering = window(y as isize + r as isize + 1);
+                for c in 0..4 {
+                    sums[c] = sums[c] + tmp[entering + c] as u32 - tmp[leaving + c] as u32;
+                }
+            }
+        }
+    }
+}
+
+fn run_layers(
+    specs: Vec<LayerSpec>,
+    width: u32,
+    height: u32,
+    background: (u8, u8, u8, u8),
+) -> PyResult<RenderResult> {
+    let (cw, ch) = (width as usize, height as usize);
+    // Canvas is premultiplied RGBA, matching the renderer's output.
+    let (br, bg_, bb, ba) = background;
+    let a = ba as u32;
+    let mut canvas = vec![0u8; cw * ch * 4];
+    for px in canvas.chunks_exact_mut(4) {
+        px[0] = ((br as u32 * a) / 255) as u8;
+        px[1] = ((bg_ as u32 * a) / 255) as u8;
+        px[2] = ((bb as u32 * a) / 255) as u8;
+        px[3] = ba;
+    }
+
+    for spec in specs {
+        let result = match spec.job {
+            LayerJob::Html {
+                html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts,
+                default_font_family,
+                allow_file_urls,
+                time,
+            } => {
+                let (w, h, mut frames) = render_frames_impl(
+                    &html,
+                    width,
+                    height,
+                    &[time],
+                    scale,
+                    color_scheme,
+                    background,
+                    base_url,
+                    fonts,
+                    default_font_family,
+                    allow_file_urls,
+                )?;
+                RenderResult { rgba: frames.remove(0), width: w, height: h }
+            }
+            LayerJob::Tpl { sender, time } => {
+                let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+                sender
+                    .send(TemplateCmd::Render { time, reply: reply_tx })
+                    .map_err(|_| PyValueError::new_err("template worker has shut down"))?;
+                reply_rx
+                    .recv()
+                    .map_err(|_| PyValueError::new_err("template worker has shut down"))?
+            }
+        };
+
+        let mut rgba = result.rgba;
+        let (lw, lh) = (result.width as usize, result.height as usize);
+        if spec.blur > 0.0 {
+            box_blur(&mut rgba, lw, lh, spec.blur);
+        }
+        if let Some((tr, tg, tb)) = spec.tint {
+            // Recolor keeping coverage: rgb := tint * alpha (premultiplied).
+            for px in rgba.chunks_exact_mut(4) {
+                let a = px[3] as u32;
+                px[0] = ((tr as u32 * a) / 255) as u8;
+                px[1] = ((tg as u32 * a) / 255) as u8;
+                px[2] = ((tb as u32 * a) / 255) as u8;
+            }
+        }
+        if spec.opacity < 1.0 {
+            let f = (spec.opacity * 255.0) as u32;
+            for px in rgba.chunks_exact_mut(4) {
+                for c in 0..4 {
+                    px[c] = ((px[c] as u32 * f) / 255) as u8;
+                }
+            }
+        }
+
+        // Premultiplied source-over, clipped to the canvas.
+        for ly in 0..lh {
+            let cy = spec.y + ly as i64;
+            if cy < 0 || cy >= ch as i64 {
+                continue;
+            }
+            for lx in 0..lw {
+                let cx = spec.x + lx as i64;
+                if cx < 0 || cx >= cw as i64 {
+                    continue;
+                }
+                let s = (ly * lw + lx) * 4;
+                let d = (cy as usize * cw + cx as usize) * 4;
+                let sa = rgba[s + 3] as u32;
+                if sa == 0 {
+                    continue;
+                }
+                let inv = 255 - sa;
+                for c in 0..4 {
+                    canvas[d + c] =
+                        (rgba[s + c] as u32 + (canvas[d + c] as u32 * inv) / 255) as u8;
+                }
+            }
+        }
+    }
+    Ok(RenderResult { rgba: canvas, width, height })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layers_common(
+    py: Python<'_>,
+    layers: Vec<Bound<'_, pyo3::types::PyDict>>,
+    width: u32,
+    height: u32,
+    background: &str,
+) -> PyResult<RenderResult> {
+    validate(width, Some(height), 1.0)?;
+    let background = parse_hex_rgba(background)?;
+    let specs = parse_layers(&layers)?;
+    py.detach(|| with_render_stack(|| run_layers(specs, width, height, background)))
+}
+
+/// Composite several documents and/or templates into one surface.
+///
+/// Each layer is a dict with either `template` (a `Template`) or `html`
+/// (+ required `width`/`height` and the usual render options), plus optional
+/// `x`, `y`, `opacity`, `blur` (px — e.g. glow underlays), `tint` (recolor
+/// keeping alpha) and `time` (animation clock). Layers paint in list order
+/// and are clipped to their rect and the canvas. Returns `(w, h, rgba)`.
+#[pyfunction]
+#[pyo3(signature = (layers, *, width, height, background="#000000"))]
+fn render_layers<'py>(
+    py: Python<'py>,
+    layers: Vec<Bound<'py, pyo3::types::PyDict>>,
+    width: u32,
+    height: u32,
+    background: &str,
+) -> PyResult<(u32, u32, Bound<'py, PyBytes>)> {
+    let result = layers_common(py, layers, width, height, background)?;
+    Ok((result.width, result.height, PyBytes::new(py, &result.rgba)))
+}
+
+/// `render_layers`, encoded as PNG bytes.
+#[pyfunction]
+#[pyo3(signature = (layers, *, width, height, background="#000000"))]
+fn render_layers_png<'py>(
+    py: Python<'py>,
+    layers: Vec<Bound<'py, pyo3::types::PyDict>>,
+    width: u32,
+    height: u32,
+    background: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let result = layers_common(py, layers, width, height, background)?;
+    let png = py.detach(|| encode_png(&result));
+    Ok(PyBytes::new(py, &png))
+}
+
+/// `render_layers`, encoded as JPEG bytes.
+#[pyfunction]
+#[pyo3(signature = (layers, *, width, height, background="#000000", quality=90))]
+fn render_layers_jpeg<'py>(
+    py: Python<'py>,
+    layers: Vec<Bound<'py, pyo3::types::PyDict>>,
+    width: u32,
+    height: u32,
+    background: &str,
+    quality: u8,
+) -> PyResult<Bound<'py, PyBytes>> {
+    validate_quality(quality)?;
+    let result = layers_common(py, layers, width, height, background)?;
+    let jpeg = py.detach(|| encode_jpeg(&result, quality))?;
+    Ok(PyBytes::new(py, &jpeg))
+}
+
 #[pymodule]
 fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -1460,6 +2262,15 @@ fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_jpeg, m)?)?;
     m.add_function(wrap_pyfunction!(render_gif, m)?)?;
     m.add_function(wrap_pyfunction!(measure_text, m)?)?;
+    m.add_function(wrap_pyfunction!(measure_text_lines, m)?)?;
+    m.add_function(wrap_pyfunction!(register_fonts, m)?)?;
+    m.add_function(wrap_pyfunction!(ellipsize, m)?)?;
+    m.add_function(wrap_pyfunction!(line_clamp, m)?)?;
+    m.add_function(wrap_pyfunction!(fit_font_size, m)?)?;
+    m.add_function(wrap_pyfunction!(wrap_balanced, m)?)?;
+    m.add_function(wrap_pyfunction!(render_layers, m)?)?;
+    m.add_function(wrap_pyfunction!(render_layers_png, m)?)?;
+    m.add_function(wrap_pyfunction!(render_layers_jpeg, m)?)?;
     m.add_class::<Template>()?;
     Ok(())
 }

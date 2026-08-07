@@ -150,3 +150,99 @@ class Template:
     def render_rgba(self, *, time: float = 0.0) -> tuple[int, int, bytes]: ...
     def render_frames(self, *, times: list[float]) -> tuple[int, int, list[bytes]]: ...
     def render_gif(self, *, times: list[float], colors: int = 64) -> bytes: ...
+    def get_box(self, id: str) -> tuple[float, float, float, float]:
+        """Final laid-out rect (x, y, w, h) of the element, in CSS px."""
+
+    def boxes(self) -> dict[str, tuple[float, float, float, float]]:
+        """Laid-out rects of every element that has an id."""
+
+def register_fonts(
+    fonts: list[bytes], *, default_family: str | None = None
+) -> list[str]:
+    """Register fonts process-wide; returns family names. Call at startup."""
+
+def measure_text_lines(
+    text: str,
+    *,
+    font_size: float,
+    max_width: float | None = None,
+    font_family: str | None = None,
+    font_weight: float = 400.0,
+    letter_spacing: float = 0.0,
+    fonts: list[bytes] | None = None,
+) -> list[tuple[float, float]]:
+    """Per-line (width, height) of wrapped text."""
+
+def ellipsize(
+    text: str,
+    *,
+    max_width: float,
+    font_size: float,
+    font_family: str | None = None,
+    font_weight: float = 400.0,
+    letter_spacing: float = 0.0,
+    ellipsis: str = "…",
+    fonts: list[bytes] | None = None,
+) -> str:
+    """Truncate with an ellipsis to fit max_width on one line (engine metrics)."""
+
+def line_clamp(
+    text: str,
+    *,
+    max_width: float,
+    max_lines: int,
+    font_size: float,
+    font_family: str | None = None,
+    font_weight: float = 400.0,
+    letter_spacing: float = 0.0,
+    ellipsis: str = "…",
+    fonts: list[bytes] | None = None,
+) -> str:
+    """Truncate so the text wraps to at most max_lines (line-clamp equivalent)."""
+
+def fit_font_size(
+    text: str,
+    *,
+    max_width: float,
+    max_size: float,
+    min_size: float = 6.0,
+    max_height: float | None = None,
+    wrap: bool = False,
+    font_family: str | None = None,
+    font_weight: float = 400.0,
+    letter_spacing: float = 0.0,
+    fonts: list[bytes] | None = None,
+) -> float:
+    """Largest font size in [min_size, max_size] at which the text fits."""
+
+def wrap_balanced(
+    text: str,
+    *,
+    max_width: float,
+    font_size: float,
+    font_family: str | None = None,
+    font_weight: float = 400.0,
+    letter_spacing: float = 0.0,
+    fonts: list[bytes] | None = None,
+) -> list[str]:
+    """Balanced line breaks (text-wrap: balance): minimum lines, evened out."""
+
+from typing import Any as _Any
+
+def render_layers(
+    layers: list[dict[str, _Any]], *, width: int, height: int, background: str = "#000000"
+) -> tuple[int, int, bytes]:
+    """Composite documents/templates: each layer has 'template' or 'html'
+    (+width/height), and optional x, y, opacity, blur, tint, time."""
+
+def render_layers_png(
+    layers: list[dict[str, _Any]], *, width: int, height: int, background: str = "#000000"
+) -> bytes: ...
+def render_layers_jpeg(
+    layers: list[dict[str, _Any]],
+    *,
+    width: int,
+    height: int,
+    background: str = "#000000",
+    quality: int = 90,
+) -> bytes: ...

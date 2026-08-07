@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-08-07
+
+### Added
+- **`render_layers` / `render_layers_png` / `render_layers_jpeg`**: composite documents and `Template`s into one surface — positions, explicit paint order, premultiplied alpha, and per-rect clipping in Rust. Per-layer `opacity`, `blur`, and `tint` enable glow/shadow effects (including text glow) that CSS can't express in this engine yet.
+- **`Template.get_box(id)` / `Template.boxes()`**: post-layout rects in CSS px — replaces Python-side mirrors of CSS sizing math.
+- **`register_fonts(fonts, default_family=None)`**: process-wide font registration; returns family names.
+- **Text utilities on the engine's shaper**: `ellipsize`, `line_clamp` (multi-line), `fit_font_size` (with `wrap`/`max_height`), `wrap_balanced` (`text-wrap: balance`), `measure_text_lines` (per-line metrics).
+
 ## 0.3.0 — 2026-08-07
 
 ### Added

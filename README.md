@@ -147,6 +147,49 @@ Template(html, *, width, height, ...)                       # parse once, re-ren
 
 `Template` methods: `set_text(id, text)` · `update(**id_to_text)` (batch, atomic) · `set_html(id, fragment)` (replace a region, new ids indexed) · `set_style(id, prop, value)` · `set_attribute(id, name, value)` · `render_png/jpeg/rgba(time=...)` · `render_frames(times=...)` · `render_gif(times=..., colors=...)`
 
+### Layered compositing
+
+`render_layers` composites several documents and/or `Template`s into one surface in a single call — positions, paint order, alpha, and clipping handled in Rust, with native PNG/JPEG output. Per-layer `blur` and `tint` unlock effects the engine can't do in CSS, like text glow:
+
+<p align="center"><img src="docs/samples/sample_neon.png" width="400" alt="neon text glow via blurred tinted layers"></p>
+
+```python
+frame = blitz_py.render_layers_jpeg(
+    [
+        {"html": backdrop_html, "width": 240, "height": 240},
+        {"template": clock_cell, "x": 8,   "y": 8},     # Templates re-render in ~0.4ms
+        {"template": temp_cell,  "x": 124, "y": 8},
+        {"html": glow_html, "width": 240, "height": 240, "blur": 8, "tint": "#00d9ff"},
+        {"html": glow_html, "width": 240, "height": 240},   # sharp pass on top
+    ],
+    width=240, height=240, background="#000000", quality=90,
+)
+```
+
+Layers paint in list order (explicit z-order) and are clipped to their rects — a whole multi-widget display becomes one call.
+
+### Layout introspection
+
+Ask the engine where things actually landed instead of mirroring CSS math in Python:
+
+```python
+tpl.get_box("forecast")   # -> (x, y, width, height) in CSS px, post-layout
+tpl.boxes()               # -> {id: rect} for every element with an id
+```
+
+### Text utilities
+
+Ellipsis, clamping, fitting and balancing — computed with the renderer's own shaper so they're exact:
+
+```python
+blitz_py.ellipsize(title, max_width=120, font_size=14)          # "Living room te…"
+blitz_py.line_clamp(desc, max_width=200, max_lines=2, font_size=13)
+blitz_py.fit_font_size("23.5°C", max_width=180, max_size=72)    # hero autoscaling
+blitz_py.wrap_balanced(headline, max_width=200, font_size=18)   # text-wrap: balance
+blitz_py.measure_text_lines(text, font_size=13, max_width=200)  # per-line metrics
+blitz_py.register_fonts([font_bytes])                           # once, process-wide
+```
+
 ### Text measurement
 
 `measure_text` exposes the engine's own shaper (Parley + the same font collection used for rendering), so Python-side fitting logic — ellipsis, autoscaling, wrapping estimates — uses the *same metrics the renderer will use*, instead of a second font system that drifts:
