@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 — 2026-08-07
+
+### Fixed
+- **No more crash on hosts with fontconfig but zero installed fonts** (e.g. fresh Home Assistant base images). fontique 0.10's fontconfig backend panics (`unwrap` on `NoMatch`) while enumerating system fonts on such hosts, and the panic escaped as a `pyo3_runtime.PanicException` (a `BaseException`) from the first blitz-py call — and again from every retry, since it aborted the one-time font-collection init. The system-font scan is now probed under `catch_unwind`; on failure blitz-py logs one warning line and continues with the bundled Inter only (identical rendering for documents that don't reference system fonts — losing only system-font lookups and CJK fallback). Upstream has fixed the `unwrap` on parley main, but no fontique release (≤ 0.11) contains it. Covered by a new CI job that installs the wheel in Alpine with fontconfig present and no fonts. Reported by an integration hitting it on a fresh HA container — thanks!
+
 ## 0.4.1 — 2026-08-07
 
 ### Fixed

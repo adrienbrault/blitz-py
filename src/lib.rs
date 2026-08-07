@@ -219,10 +219,34 @@ fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
     use parley::fontique::{Blob, Collection, CollectionOptions};
     static BASE: OnceLock<Mutex<Collection>> = OnceLock::new();
     BASE.get_or_init(|| {
-        let mut collection = Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: true,
-            ..Default::default()
+        // fontique's system-font scan can panic on degenerate hosts — e.g.
+        // fontconfig present but zero fonts installed makes its fontconfig
+        // backend unwrap a NoMatch (fontique <= 0.11; fixed on parley main,
+        // unreleased). Probe inside catch_unwind and fall back to the bundled
+        // font only, so a font-less container still renders. The hook swap
+        // keeps the probe's panic trace out of host logs; the init runs once
+        // and every render path funnels through this OnceLock, so the window
+        // where an unrelated thread's panic would go unreported is negligible.
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let probed = std::panic::catch_unwind(|| {
+            Collection::new(CollectionOptions {
+                shared: false,
+                system_fonts: true,
+                ..Default::default()
+            })
+        });
+        std::panic::set_hook(prev_hook);
+        let mut collection = probed.unwrap_or_else(|_| {
+            eprintln!(
+                "blitz-py: system font enumeration failed (fontconfig installed but no \
+                 fonts?); continuing with bundled fonts only"
+            );
+            Collection::new(CollectionOptions {
+                shared: false,
+                system_fonts: false,
+                ..Default::default()
+            })
         });
         // Register under the explicit name "Inter" (the file's own family
         // name is "Inter Variable") and wire the defaults by returned id —

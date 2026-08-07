@@ -10,6 +10,7 @@ Engine behaviors discovered while building blitz-py, against `blitz 0.3.0-beta.1
 | CSS *animations* don't apply to `<svg>` elements (static transforms do) | blitz-dom style/animation | Animate a wrapping `<div>` | Not reported |
 | `DocumentMutator::set_style_property` doesn't invalidate layout | blitz-dom 0.3.0-beta.1 | `Template.set_style` rewrites the `style` attribute instead | Fixed on main (#582), unreleased |
 | Bundled font family naming: fontique registers fonts under internal name (`"Inter Variable"`), so name-based defaults can silently bind to a system font or nothing | fontique | Register with `FontInfoOverride { family_name }` and wire generics by `FamilyId` | Working as designed; gotcha documented |
+| System-font scan panics when fontconfig is installed but zero fonts are (`font_sort(...).unwrap()` on `NoMatch` while populating generic families) — hit on fresh Home Assistant base images | fontique 0.10 `backend/fontconfig.rs` | Probe `Collection::new(system_fonts: true)` under `catch_unwind`; fall back to bundled-fonts-only (`base_mutex()`) | Fixed on parley main (`let Ok(..) else` skip), in no release ≤ 0.11 — drop the workaround at the next parley/blitz bump |
 
 Worth contributing upstream when we engage: `text-overflow: ellipsis` support in blitz-dom — currently consumers re-implement truncation in application code; `measure_text` (v0.3.0) removes the metric-mismatch pain but native ellipsis is the real fix.
 
