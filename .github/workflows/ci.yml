@@ -77,14 +77,9 @@ jobs:
           - target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
             name: musllinux-aarch64
-          # 32-bit ARM: frozen pre-2026 Home Assistant installs on Pi 2/3.
-          # Best-effort — not covered by the determinism CI.
-          - target: armv7-unknown-linux-gnueabihf
-            manylinux: auto
-            name: manylinux-armv7l
-          - target: armv7-unknown-linux-musleabihf
-            manylinux: musllinux_1_2
-            name: musllinux-armv7l
+          # armv7 (32-bit) is deliberately absent: anyrender 0.11 fails to
+          # compile on 32-bit targets (a size_of assertion assumes 64-bit
+          # pointers). Revisit when the engine stack supports 32-bit.
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
@@ -136,13 +131,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x64, aarch64-pc-windows-msvc]
+        include:
+          - target: x64
+            args: --release --out dist
+          - target: aarch64-pc-windows-msvc
+            # Cross-build: no arm64 Python on the x64 runner; name the
+            # interpreter so maturin uses its bundled sysconfig for abi3.
+            args: --release --out dist -i python3.12
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: ${{ matrix.args }}
           sccache: "true"
       - uses: actions/upload-artifact@v4
         with:

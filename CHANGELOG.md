@@ -11,7 +11,7 @@
 - **`measure_text(text, *, font_size, ...)`**: text measurement via the engine's own shaper (Parley + the rendering font collection) — one source of truth for Python-side ellipsis/fitting logic. Supports CSS font-family lists, weight, letter-spacing, and `max_width` wrapping.
 - README recipes: OG/social cards (with sample), email-HTML previews, exact-hash visual snapshot tests.
 - CI: musl wheels are now *tested* in an Alpine container (previously only built); `windows-aarch64` wheels added.
-- **armv7l wheels** (glibc + musl), best-effort, for frozen 32-bit Home Assistant installs on Pi 2/3 — outside the determinism CI's coverage.
+- Explicit 32-bit (armv7l) policy: no wheels — `anyrender` 0.11 does not compile on 32-bit targets (documented in README and docs/UPSTREAM.md).
 
 ## 0.2.0 — 2026-08-07
 

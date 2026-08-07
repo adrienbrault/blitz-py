@@ -13,6 +13,8 @@ Engine behaviors discovered while building blitz-py, against `blitz 0.3.0-beta.1
 
 Worth contributing upstream when we engage: `text-overflow: ellipsis` support in blitz-dom — currently consumers re-implement truncation in application code; `measure_text` (v0.3.0) removes the metric-mismatch pain but native ellipsis is the real fix.
 
+Also worth noting: `anyrender` 0.11 fails to compile on 32-bit targets — `const _: [u8; 128] = [0; size_of::<FilterEffect>()]` assumes 64-bit pointer sizes (88 bytes on armv7). This blocks armv7l wheels entirely.
+
 Also relevant but not engine bugs:
 
 - `anyrender_vello_cpu` 0.15 requires `anyrender` 0.12, incompatible with `blitz-paint 0.3.0-beta.1` (needs 0.11) — pin 0.14 until the next blitz release.

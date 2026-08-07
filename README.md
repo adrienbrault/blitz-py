@@ -27,9 +27,9 @@ Unedited `render_png` output: a [Tailwind v4](examples/tailwind_dashboard.html) 
 pip install blitz-py
 ```
 
-Prebuilt wheels (abi3, Python ≥ 3.10): Linux glibc + musl (x86_64, aarch64, armv7l), macOS (arm64, x86_64), Windows (x64, arm64).
+Prebuilt wheels (abi3, Python ≥ 3.10): Linux glibc + musl (x86_64, aarch64), macOS (arm64, x86_64), Windows (x64, arm64).
 
-armv7l (32-bit ARM, e.g. frozen pre-2026 Home Assistant installs on Pi 2/3) is built best-effort: it gets the same test suite via the sdist path but is not covered by the cross-platform determinism check.
+**No 32-bit (armv7l) wheels** — this is an explicit drop, not an oversight: the rendering stack (`anyrender` 0.11) does not compile on 32-bit targets, and Home Assistant itself removed 32-bit support as of 2025.12. Frozen 32-bit installs on Pi 2/3 cannot use this package; we'll revisit if the engine gains 32-bit support.
 
 ## Usage
 
