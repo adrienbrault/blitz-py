@@ -1,0 +1,24 @@
+[package]
+name = "blitz-py-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+blitz-dom = { version = "0.3.0-beta.1", default-features = false, features = ["svg", "woff"] }
+blitz-html = "0.3.0-beta.1"
+blitz-paint = "0.3.0-beta.1"
+blitz-traits = "0.3.0-beta.1"
+anyrender = "0.11"
+anyrender_vello_cpu = "0.14"
+
+[[bin]]
+name = "render"
+path = "fuzz_targets/render.rs"
+test = false
+doc = false
+bench = false

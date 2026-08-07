@@ -7,3 +7,7 @@ examples/out_*.png
 examples/out_*.jpg
 examples/.bootstrap.min.css
 examples/out_*.gif
+fuzz/target
+fuzz/corpus
+fuzz/artifacts
+fuzz/Cargo.lock

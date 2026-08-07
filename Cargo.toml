@@ -1,6 +1,6 @@
 [package]
 name = "blitz-py"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Python bindings for the Blitz HTML/CSS rendering engine"
@@ -29,5 +29,6 @@ data-url = "0.3"
 png = "0.17"
 
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 codegen-units = 1

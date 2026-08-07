@@ -93,14 +93,30 @@ Anything `@keyframes` can express — transforms, opacity, colors — loops perf
 
 File-size tips (a 3.2s 240×240 widget loop, measured): one **shared palette** across frames and **no dithering** matter most — both per-frame palettes and dither noise defeat GIF's delta/LZW compression. Naive 20fps/256-color/dithered ≈ 163KB; 20fps/64-color shared/no-dither ≈ 26KB; 12fps ≈ 18KB; 8fps/32 colors ≈ 11KB. Flat-color UI animation quantizes to 64 colors with no visible loss; gradients are what eat palette entries.
 
-## API
+## Fast repeated renders: `Template`
 
-Three functions, same keyword arguments:
+For dashboards and device widgets that re-render the same document with fresh data, parse once and mutate by element `id`:
 
 ```python
-render_png(html, *, width, height, ...) -> bytes            # PNG file bytes
-render_rgba(html, *, width, height, ...) -> (w, h, bytes)   # raw RGBA pixels
+tpl = blitz_py.Template(html, width=240, height=240)
+tpl.set_text("temp", "21.5°")            # element must hold one text node
+tpl.set_style("bar", "width", "62%")
+tpl.set_attribute("icon", "src", data_uri)
+png = tpl.render_png()                    # ~0.4ms — 3x faster than one-shot
+frame = tpl.render_png(time=0.5)          # animation clock also available
+```
+
+Templates are safe to share across threads (the document lives on its own worker thread), and renders release the GIL — 4 rendering threads get ~3.5× throughput.
+
+## API
+
+Three functions and a class, same keyword arguments:
+
+```python
+render_png(html, *, width, height=None, ...) -> bytes       # PNG; height=None → content height
+render_rgba(html, *, width, height=None, ...) -> (w, h, bytes)   # raw RGBA pixels
 render_frames(html, *, width, height, times, ...) -> (w, h, [bytes, ...])  # animation frames
+Template(html, *, width, height, ...)                       # parse once, re-render fast
 ```
 
 | Argument | Default | Meaning |
@@ -110,6 +126,8 @@ render_frames(html, *, width, height, times, ...) -> (w, h, [bytes, ...])  # ani
 | `color_scheme` | `"light"` | `"light"` or `"dark"` — drives `@media (prefers-color-scheme: ...)` |
 | `background` | `"#ffffff"` | Base canvas color (`#rgb`, `#rrggbb`, `#rrggbbaa`), or `None` for transparent |
 | `base_url` | `None` | Base for resolving relative URLs |
+| `css` | `None` | Extra CSS appended after the document's styles (wins the cascade) |
+| `css_vars` | `None` | Dict of CSS custom properties set on `:root`, e.g. `{"accent": "#f00"}` → `var(--accent)` |
 | `fonts` | `None` | List of font file `bytes` (TTF/OTF, variable fonts OK) to register |
 | `default_font_family` | `None` | Family name to use for all CSS generic families (`sans-serif`, `serif`, ...) and as text fallback |
 | `allow_file_urls` | `False` | Permit `file://` URLs for images/resources |
@@ -176,6 +194,13 @@ Measured on an M-series Mac (arm64), each scenario in a fresh process, release b
 | Animated GIF: widget, 38 frames | 240×240×38 | 53ms total | **1.4ms**/frame | 77MB |
 
 GIF encoding on top of rendering (Pillow quantize + LZW, 38 frames): ~60ms, 18KB output.
+
+More performance properties, all verified in CI or by `examples/bench.py`:
+
+- **`Template` re-renders in ~0.4ms** (parse and first style pass amortized away).
+- **Thread scaling**: the GIL is released during rendering; 4 threads → ~3.5× throughput.
+- **Deterministic across platforms**: CI renders a golden set on Linux, macOS, and Windows and asserts the outputs are byte-identical. Snapshot tests in your project can compare exact hashes.
+- Package ships type stubs (`py.typed`), so the API autocompletes and type-checks.
 
 The first render pays a one-time system-font scan; after that the font collection is cached and cloned per render. Importing the module adds ~1MB RSS; memory stays flat under sustained rendering (no per-render growth — verified over 1000+ renders). On an Alpine/arm64 container the warm widget render measures ~0.8ms.
 

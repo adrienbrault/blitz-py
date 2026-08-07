@@ -137,11 +137,53 @@ def run_gif(name: str) -> None:
     )
 
 
+def run_threads(name: str) -> None:
+    """Concurrent rendering scales because the GIL is released during render."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import blitz_py
+
+    html, w, h, scale, bg = scenario("widget")
+    n = 200
+    blitz_py.render_png(html, width=w, height=h, scale=scale, background=bg)
+
+    t0 = time.perf_counter()
+    for _ in range(n):
+        blitz_py.render_png(html, width=w, height=h, scale=scale, background=bg)
+    serial = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(4) as pool:
+        list(
+            pool.map(
+                lambda _: blitz_py.render_png(
+                    html, width=w, height=h, scale=scale, background=bg
+                ),
+                range(n),
+            )
+        )
+    parallel = time.perf_counter() - t0
+
+    print(
+        json.dumps(
+            {
+                "scenario": name,
+                "px": f"{n} renders, 1 vs 4 threads",
+                "cold_ms": round(serial * 1000, 1),
+                "warm_ms": round(parallel * 1000, 1),
+                "speedup": round(serial / parallel, 2),
+            }
+        )
+    )
+
+
 def run_one(name: str) -> None:
     import blitz_py
 
     if name == "gif":
         return run_gif(name)
+    if name == "threads":
+        return run_threads(name)
 
     html, w, h, scale, bg = scenario(name)
 

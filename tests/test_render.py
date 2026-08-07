@@ -205,6 +205,90 @@ class TestColorScheme:
         assert pixel(dark, w, 5, 5) == (0, 0, 0, 255)
 
 
+class TestAutoHeight:
+    def test_height_follows_content(self):
+        short = blitz_py.render_png("<p style='margin:0'>one line</p>", width=300)
+        tall = blitz_py.render_png(
+            "<p style='margin:0'>line</p>" * 30, width=300
+        )
+        assert png_size(short)[0] == 300 and png_size(tall)[0] == 300
+        assert png_size(tall)[1] > png_size(short)[1] >= 10
+
+    def test_scale_applies(self):
+        a = blitz_py.render_png("<p style='margin:0;height:100px'>x</p>", width=100)
+        b = blitz_py.render_png(
+            "<p style='margin:0;height:100px'>x</p>", width=100, scale=2.0
+        )
+        assert png_size(b)[1] == 2 * png_size(a)[1]
+
+
+class TestCssInjection:
+    def test_css_overrides(self):
+        w, h, rgba = blitz_py.render_rgba(
+            "<body style='background:#fff'>",
+            width=10,
+            height=10,
+            css="body { background: #00ff00 !important }",
+        )
+        assert pixel(rgba, w, 5, 5) == (0, 255, 0, 255)
+
+    def test_css_vars(self):
+        html = "<body style='margin:0'><div style='width:20px;height:20px;background:var(--accent)'></div>"
+        w, h, rgba = blitz_py.render_rgba(
+            html, width=20, height=20, css_vars={"accent": "#ff0000"}
+        )
+        assert pixel(rgba, w, 10, 10) == (255, 0, 0, 255)
+
+    def test_bad_var_name(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_png(
+                "<p>x</p>", width=10, height=10, css_vars={"bad name": "red"}
+            )
+
+
+class TestTemplate:
+    HTML = (
+        "<style>body{margin:0;background:#fff;font-family:sans-serif}</style>"
+        "<body><div id='box' style='width:30px;height:30px;background:#00f'></div>"
+        "<p id='label'>initial</p></body>"
+    )
+
+    def test_set_text_changes_output(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=100)
+        a = tpl.render_png()
+        tpl.set_text("label", "changed text here")
+        b = tpl.render_png()
+        assert a != b
+        assert png_size(a) == png_size(b) == (200, 100)
+
+    def test_set_style(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=100)
+        w, h, before = tpl.render_rgba()
+        assert pixel(before, w, 100, 15) == (255, 255, 255, 255)
+        tpl.set_style("box", "width", "150px")
+        w, h, after = tpl.render_rgba()
+        assert pixel(after, w, 100, 15) == (0, 0, 255, 255)
+
+    def test_unknown_id(self):
+        tpl = blitz_py.Template(self.HTML, width=100, height=50)
+        with pytest.raises(ValueError):
+            tpl.set_text("nope", "x")
+
+    def test_matches_one_shot_render(self):
+        tpl = blitz_py.Template(self.HTML, width=200, height=100)
+        assert tpl.render_png() == blitz_py.render_png(
+            self.HTML, width=200, height=100
+        )
+
+    def test_cross_thread_use(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        tpl = blitz_py.Template(self.HTML, width=100, height=50)
+        with ThreadPoolExecutor(4) as pool:
+            results = list(pool.map(lambda i: tpl.render_png(), range(16)))
+        assert all(r == results[0] for r in results)
+
+
 ANIMATED_HTML = (
     "<style>body{margin:0;background:#fff}"
     ".b{width:20px;height:20px;background:#e11;animation:m 2s linear infinite}"

@@ -31,6 +31,33 @@ jobs:
           pip install dist/*.whl
       - name: Test
         run: pytest tests/ -v
+      - name: Golden hashes
+        shell: bash
+        run: python scripts/golden.py | tee "golden-${{ matrix.os }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: golden-${{ matrix.os }}
+          path: golden-*.json
+
+  golden:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: golden-*
+          path: goldens
+          merge-multiple: true
+      - name: Assert cross-platform determinism
+        run: |
+          cd goldens
+          cat *.json
+          unique=$(md5sum *.json | awk '{print $1}' | sort -u | wc -l)
+          if [ "$unique" != "1" ]; then
+            echo "::error::Renders are not byte-identical across platforms"
+            exit 1
+          fi
+          echo "All platforms produced identical renders."
 
   linux-wheels:
     runs-on: ubuntu-latest

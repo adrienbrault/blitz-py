@@ -1,0 +1,29 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Total fuzzing time in seconds"
+        default: "600"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz
+      - name: Fuzz the render pipeline
+        run: cargo +nightly fuzz run render -- -max_total_time=${{ inputs.seconds }} -max_len=65536
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
