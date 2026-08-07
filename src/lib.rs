@@ -1978,7 +1978,7 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
         let time: f64 = dict_get(dict, "time")?.unwrap_or(0.0);
 
         let template: Option<Bound<'_, Template>> = match dict.get_item("template")? {
-            Some(v) if !v.is_none() => Some(v.downcast_into::<Template>().map_err(|_| {
+            Some(v) if !v.is_none() => Some(v.cast_into::<Template>().map_err(|_| {
                 PyValueError::new_err("layer 'template' must be a blitz_py.Template")
             })?),
             _ => None,
