@@ -3,9 +3,9 @@
      bezier of a periodic series, drawn two cycles wide and scrolled one cycle per
      loop. Render with:
 
-       w, h, frames = blitz_py.render_frames(html, width=560, height=310, scale=1.5,
-                                             background="#0b1120",
-                                             times=[i/12 for i in range(48)])
+       gif = blitz_py.render_gif(html, width=560, height=310, scale=1.5,
+                                 background="#0b1120", colors=128,
+                                 times=[i/12 for i in range(48)])
 -->
 <style>
 /*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */

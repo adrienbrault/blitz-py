@@ -1,6 +1,4 @@
-"""Render a CSS-animated 240x240 widget to a looping GIF."""
-
-from PIL import Image
+"""Render a CSS-animated 240x240 widget to a looping GIF — one native call."""
 
 import blitz_py
 
@@ -39,22 +37,12 @@ HTML = """
 
 FPS, SECONDS = 12, 3.2  # 3.2s = one loop of the slowest animation
 
-w, h, frames = blitz_py.render_frames(
-    HTML, width=240, height=240, times=[i / FPS for i in range(int(FPS * SECONDS))]
+gif = blitz_py.render_gif(
+    HTML,
+    width=240,
+    height=240,
+    times=[i / FPS for i in range(int(FPS * SECONDS))],
 )
-rgbs = [Image.frombytes("RGBA", (w, h), f).convert("RGB") for f in frames]
-
-# One shared palette and no dithering: dither noise and per-frame palettes
-# both defeat GIF's LZW/delta compression (this widget: 163KB naive vs 18KB).
-base = rgbs[0].quantize(colors=64, dither=Image.Dither.NONE)
-imgs = [im.quantize(colors=64, palette=base, dither=Image.Dither.NONE) for im in rgbs]
-
-imgs[0].save(
-    "examples/out_widget.gif",
-    save_all=True,
-    append_images=imgs[1:],
-    duration=int(1000 / FPS),
-    loop=0,
-    optimize=True,
-)
-print(f"examples/out_widget.gif: {len(imgs)} frames at {w}x{h}")
+with open("examples/out_widget.gif", "wb") as f:
+    f.write(gif)
+print(f"examples/out_widget.gif: {len(gif) // 1024}KB")

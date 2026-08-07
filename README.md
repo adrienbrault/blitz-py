@@ -15,11 +15,11 @@ A 240×240 widget renders in ~1.5ms warm on an M-series Mac (~40ms for the first
   <img src="docs/samples/sample_tailwind.png" width="560" alt="Dashboard rendered from Tailwind v4 CSS: bento grid, SVG donut and sparkline, avatar stack, gradients">
 </p>
 <p align="center">
-  <img src="docs/samples/sample_widget.png" width="170" alt="240x240 smart-display widget, hand-written CSS">
-  <img src="docs/samples/sample_bootstrap.png" width="280" alt="Bootstrap 5.3 card with buttons, badge, alert and progress bar">
+  <img src="docs/samples/sample_display.png" width="200" alt="240x240 smart display composed from Templates with render_layers, ellipsized title, glow accent">
+  <img src="docs/samples/sample_bootstrap.png" width="250" alt="Bootstrap 5.3 card with buttons, badge, alert and progress bar">
 </p>
 
-Unedited `render_png` output: a [Tailwind v4](examples/tailwind_dashboard.html) dashboard (grid, SVG donut + sparkline, gradients, avatar stack), a [240×240 widget](examples/widget.py), and Bootstrap 5.3 components.
+Unedited output: a [Tailwind v4 dashboard](examples/tailwind_dashboard.html) (`render_png` — grid, SVG donut + sparkline, gradients), a [240×240 smart display](examples/smart_display.py) (one `render_layers` call over four `Template` cells, `ellipsize`d title, glow accent), and Bootstrap 5.3 components.
 
 ## Install
 
