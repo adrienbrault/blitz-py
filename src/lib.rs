@@ -901,12 +901,24 @@ impl Template {
 
     /// Set an inline style property (e.g. `set_style("bar", "width", "62%")`).
     fn set_style(&self, py: Python<'_>, id: &str, name: &str, value: &str) -> PyResult<()> {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(PyValueError::new_err(format!(
+                "invalid css property name '{name}'"
+            )));
+        }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
         self.mutate(py, |reply| TemplateCmd::SetStyle { id, name, value, reply })
     }
 
     /// Set an attribute on the element with the given `id`.
     fn set_attribute(&self, py: Python<'_>, id: &str, name: &str, value: &str) -> PyResult<()> {
+        if name.eq_ignore_ascii_case("id") {
+            // The id -> node map is built once at construction; renaming ids
+            // would silently desynchronize it.
+            return Err(PyValueError::new_err(
+                "changing the 'id' attribute of a template element is not supported",
+            ));
+        }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
         self.mutate(py, |reply| TemplateCmd::SetAttr { id, name, value, reply })
     }

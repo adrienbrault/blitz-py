@@ -186,12 +186,12 @@ Measured on an M-series Mac (arm64), each scenario in a fresh process, release b
 
 | Scenario | Output px | First render | Warm render | Peak RSS after 200 renders |
 |---|---|---:|---:|---:|
-| `<h1>Hello</h1>` | 200×100 | 104ms | **0.4ms** | 43MB |
-| 240×240 widget @2× (flex + gradients) | 480×480 | 42ms | **1.3ms** | 47MB |
-| Bootstrap 5.3 card (233KB CSS) | 880×720 | 37ms | **7.0ms** | 58MB |
-| Tailwind v4 dashboard (the gallery image) | 1520×1328 | 63ms | **18ms** | 62MB |
-| Long article | 800×4000 | 48ms | **13ms** | 69MB |
-| Animated GIF: widget, 38 frames | 240×240×38 | 53ms total | **1.4ms**/frame | 77MB |
+| `<h1>Hello</h1>` | 200×100 | 35ms | **0.5ms** | 42MB |
+| 240×240 widget @2× (flex + gradients) | 480×480 | 32ms | **1.8ms** | 45MB |
+| Bootstrap 5.3 card (233KB CSS) | 880×720 | 39ms | **8.2ms** | 51MB |
+| Tailwind v4 dashboard (the gallery image) | 1520×1328 | 60ms | **22ms** | 62MB |
+| Long article | 800×4000 | 56ms | **21ms** | 73MB |
+| Animated GIF: widget, 38 frames | 240×240×38 | 56ms total | **1.5ms**/frame | 76MB |
 
 GIF encoding on top of rendering (Pillow quantize + LZW, 38 frames): ~60ms, 18KB output.
 

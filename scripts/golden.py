@@ -63,7 +63,9 @@ def main() -> int:
         else:
             _, _, data = blitz_py.render_rgba(html, width=w, height=h, scale=scale)
         hashes[name] = hashlib.sha256(data).hexdigest()
-    print(json.dumps(hashes, indent=2, sort_keys=True))
+    # Bypass text-mode newline translation so the output is byte-identical
+    # across platforms (Windows would otherwise emit \r\n).
+    sys.stdout.buffer.write((json.dumps(hashes, indent=2, sort_keys=True) + "\n").encode())
     return 0
 
 
