@@ -245,6 +245,15 @@ class TestCssInjection:
                 "<p>x</p>", width=10, height=10, css_vars={"bad name": "red"}
             )
 
+    def test_var_value_cannot_break_out_of_style(self):
+        with pytest.raises(ValueError):
+            blitz_py.render_png(
+                "<p>x</p>",
+                width=10,
+                height=10,
+                css_vars={"v": "red</style><script>"},
+            )
+
 
 class TestTemplate:
     HTML = (
@@ -273,6 +282,16 @@ class TestTemplate:
         tpl = blitz_py.Template(self.HTML, width=100, height=50)
         with pytest.raises(ValueError):
             tpl.set_text("nope", "x")
+
+    def test_set_style_rejects_bad_property_name(self):
+        tpl = blitz_py.Template(self.HTML, width=100, height=50)
+        with pytest.raises(ValueError):
+            tpl.set_style("box", "width:1;height", "10px")
+
+    def test_set_attribute_rejects_id(self):
+        tpl = blitz_py.Template(self.HTML, width=100, height=50)
+        with pytest.raises(ValueError):
+            tpl.set_attribute("box", "id", "renamed")
 
     def test_matches_one_shot_render(self):
         tpl = blitz_py.Template(self.HTML, width=200, height=100)

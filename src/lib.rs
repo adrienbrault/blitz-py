@@ -163,7 +163,9 @@ fn compose_html(
                 )));
             }
             let value = &vars[name];
-            if value.contains(['{', '}']) {
+            // '<' could smuggle a premature `</style>` (HTML parsing does not
+            // respect CSS string syntax); braces could escape the :root block.
+            if value.contains(['{', '}', '<']) {
                 return Err(PyValueError::new_err(format!(
                     "invalid css variable value for '{name}'"
                 )));
@@ -786,6 +788,9 @@ impl TemplateWorker {
 /// The document lives on a dedicated worker thread (it is not thread-safe
 /// itself), so a `Template` can be freely shared across Python threads;
 /// operations are serialized in call order.
+///
+/// The id map is built once at construction; if several elements share an
+/// `id` (invalid HTML), the last one in tree order wins.
 #[pyclass]
 struct Template {
     tx: Mutex<std::sync::mpsc::Sender<TemplateCmd>>,
