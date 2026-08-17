@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-08-17
 
 ### Changed
 - **Engine bump: Blitz `main` @ `01a6c4b` (2026-08-17) via git pin** — ~140 commits past `0.3.0-beta.1`, no crates.io release exists yet. Brings Stylo 0.20, Taffy 0.13, parley/fontique 0.11.1, anyrender 0.13 / vello_cpu 0.16, and a long list of layout and robustness fixes: no more panics on documents without a root element, on unresolvable `@font-face` URLs, on degenerate aspect ratios; correct resource gating with a synchronous `NetProvider` (#636/#695); table sizing (border-spacing, fixed columns, cell padding with floats, `calc()` widths); floats no longer split the inline flow; replaced-element intrinsic sizing (img/svg/canvas/iframe); block-axis `align-content`, `order` on `::before/::after`, `safe` alignment; `background-attachment: fixed`, SVG background-image sizing per CSS, `contain: paint`, `clip-path` corner radii; `<iframe>`, comment nodes, scoped `querySelector`. Incremental layout is now on by default. Renders of the gallery samples are pixel-identical to 0.4.2; warm-render times are unchanged to slightly faster.
