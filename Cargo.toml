@@ -12,18 +12,22 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.27", features = ["abi3-py310", "generate-import-lib"] }
-blitz-dom = { version = "0.3.0-beta.1", default-features = false }
-blitz-html = "0.3.0-beta.1"
-blitz-paint = "0.3.0-beta.1"
-blitz-traits = "0.3.0-beta.1"
-anyrender = "0.11"
-anyrender_vello_cpu = "0.14"
-parley = "0.10"
+# Blitz is pinned to a `main` commit (post-0.3.0-beta.1, no newer crates.io
+# release yet) for ~140 layout/robustness fixes; see docs/UPSTREAM.md. The
+# anyrender/anyrender_vello_cpu/parley versions below must match that commit's
+# workspace Cargo.toml. Return to a crates.io version at the next release.
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730", default-features = false }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+anyrender = "0.13"
+anyrender_vello_cpu = "0.16"
+parley = "0.11"
 # fontconfig-dlopen: load fontconfig at runtime if present instead of linking
 # it. Keeps Linux wheels free of a libfontconfig link dependency (forbidden by
 # manylinux/musllinux policies) while still discovering system fonts on
 # distros that have it.
-fontique = { version = "0.10", features = ["fontconfig-dlopen"] }
+fontique = { version = "0.11", features = ["fontconfig-dlopen"] }
 peniko = "0.6"
 data-url = "0.3"
 png = "0.17"

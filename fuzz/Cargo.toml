@@ -9,12 +9,12 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-blitz-dom = { version = "0.3.0-beta.1", default-features = false, features = ["svg", "woff"] }
-blitz-html = "0.3.0-beta.1"
-blitz-paint = "0.3.0-beta.1"
-blitz-traits = "0.3.0-beta.1"
-anyrender = "0.11"
-anyrender_vello_cpu = "0.14"
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730", default-features = false, features = ["svg", "woff"] }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
+anyrender = "0.13"
+anyrender_vello_cpu = "0.16"
 
 [[bin]]
 name = "render"
