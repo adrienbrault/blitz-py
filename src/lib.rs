@@ -221,7 +221,7 @@ fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
     BASE.get_or_init(|| {
         // fontique's system-font scan can panic on degenerate hosts — e.g.
         // fontconfig present but zero fonts installed makes its fontconfig
-        // backend unwrap a NoMatch (fontique <= 0.11; fixed on parley main,
+        // backend unwrap a NoMatch (fontique <= 0.11.1; fixed on parley main,
         // unreleased). Probe inside catch_unwind and fall back to the bundled
         // font only, so a font-less container still renders. The hook swap
         // keeps the probe's panic trace out of host logs; the init runs once
@@ -755,7 +755,7 @@ fn render_impl(
     let physical_height = match height {
         Some(h) => (h as f64 * scale as f64) as u32,
         None => {
-            let content_css_px = document.as_ref().root_element().final_layout.size.height;
+            let content_css_px = document.as_ref().root_element().final_layout().size.height;
             let ph = ((content_css_px as f64) * scale as f64).ceil().max(1.0) as u64;
             if ph > MAX_DIM || (physical_width as u64) * ph > MAX_PIXELS {
                 return Err(PyValueError::new_err(format!(
@@ -1393,7 +1393,7 @@ enum TemplateCmd {
 /// text-node child (if it has exactly one child and that child is text).
 fn build_id_map(
     doc: &blitz_dom::BaseDocument,
-) -> std::collections::HashMap<String, (usize, Option<usize>)> {
+) -> std::collections::HashMap<String, (blitz_dom::NodeId, Option<blitz_dom::NodeId>)> {
     let mut map = std::collections::HashMap::new();
     let mut stack = vec![doc.root_element().id];
     while let Some(node_id) = stack.pop() {
@@ -1448,11 +1448,11 @@ struct TemplateWorker {
     physical_width: u32,
     physical_height: u32,
     background: Option<blitz_dom::util::Color>,
-    id_map: std::collections::HashMap<String, (usize, Option<usize>)>,
+    id_map: std::collections::HashMap<String, (blitz_dom::NodeId, Option<blitz_dom::NodeId>)>,
 }
 
 impl TemplateWorker {
-    fn lookup(&self, id: &str) -> Result<(usize, Option<usize>), String> {
+    fn lookup(&self, id: &str) -> Result<(blitz_dom::NodeId, Option<blitz_dom::NodeId>), String> {
         self.id_map
             .get(id)
             .copied()
@@ -1460,24 +1460,24 @@ impl TemplateWorker {
     }
 
     /// Absolute laid-out rect of a node in CSS pixels (post-resolve).
-    fn abs_box(&self, node_id: usize) -> (f64, f64, f64, f64) {
+    fn abs_box(&self, node_id: blitz_dom::NodeId) -> (f64, f64, f64, f64) {
         let doc = self.document.as_ref();
         let Some(node) = doc.get_node(node_id) else {
             return (0.0, 0.0, 0.0, 0.0);
         };
         let (mut x, mut y) = (
-            node.final_layout.location.x as f64,
-            node.final_layout.location.y as f64,
+            node.final_layout().location.x as f64,
+            node.final_layout().location.y as f64,
         );
         let (w, h) = (
-            node.final_layout.size.width as f64,
-            node.final_layout.size.height as f64,
+            node.final_layout().size.width as f64,
+            node.final_layout().size.height as f64,
         );
         let mut current = node.parent;
         while let Some(parent_id) = current {
             let Some(parent) = doc.get_node(parent_id) else { break };
-            x += parent.final_layout.location.x as f64;
-            y += parent.final_layout.location.y as f64;
+            x += parent.final_layout().location.x as f64;
+            y += parent.final_layout().location.y as f64;
             current = parent.parent;
         }
         (x, y, w, h)
@@ -1499,10 +1499,10 @@ impl TemplateWorker {
                 }
                 TemplateCmd::SetStyle { id, name, value, reply } => {
                     // Rewrite the `style` attribute rather than using
-                    // `set_style_property`: property mutation misses layout
-                    // invalidation in blitz 0.3.0-beta.1 (fixed upstream
-                    // post-release), while attribute mutation invalidates
-                    // correctly.
+                    // `set_style_property`: property mutation missed layout
+                    // invalidation in blitz 0.3.0-beta.1 (fixed on main,
+                    // #582, which our pin includes); attribute mutation
+                    // invalidates correctly on both, so this is kept.
                     let result = self.lookup(&id).map(|(node_id, _)| {
                         let current = self
                             .document
