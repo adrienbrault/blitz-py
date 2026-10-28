@@ -28,7 +28,7 @@ parley = "0.12"
 fontique = { version = "0.12", features = ["fontconfig-dlopen"] }
 peniko = "0.6"
 data-url = "0.3"
-png = "0.17"
+png = "0.18"
 jpeg-encoder = "0.7"
 color_quant = "2"
 gif = "0.14"
