@@ -268,7 +268,7 @@ blitz_py.render_png(html, width=240, height=240,
 }
 ```
 
-WOFF/WOFF2 sources are supported too. `local(...)` sources and format-less data URIs are currently skipped by the engine.
+WOFF/WOFF2 sources are supported too (since 0.6.0; earlier wheels silently fell back to the default font). `local(...)` sources and format-less data URIs are currently skipped by the engine.
 
 Note on coverage: bundled Inter covers Latin scripts (plus Greek/Cyrillic). For CJK, Arabic, and other scripts on systems without suitable fonts, pass an appropriate font (e.g. a Noto variant) via `fonts=`.
 

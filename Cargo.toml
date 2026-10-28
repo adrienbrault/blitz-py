@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.30", features = ["abi3-py310", "generate-import-lib"] }
 # The anyrender/anyrender_vello_cpu/parley versions below must match the
 # blitz release's workspace Cargo.toml; re-pair on every bump (docs/UPSTREAM.md).
-blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["woff"] }
 blitz-html = "=0.3.0-beta.4"
 blitz-paint = "=0.3.0-beta.4"
 blitz-traits = "=0.3.0-beta.4"
