@@ -1112,6 +1112,11 @@ fn encode_png(result: &RenderResult) -> Vec<u8> {
     let mut encoder = png::Encoder::new(&mut out, result.width, result.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // png 0.18 defaults to Balanced deflate with adaptive row filtering,
+    // 4-8x slower to encode than png 0.17's defaults (fdeflate, fixed Sub
+    // filter). Restore those: encode stays cheap next to rendering.
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::Filter::Sub);
     let mut writer = encoder.write_header().expect("failed to write PNG header");
     writer
         .write_image_data(&result.rgba)
