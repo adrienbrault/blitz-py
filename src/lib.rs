@@ -1118,9 +1118,10 @@ fn spawn_render_worker() -> std::sync::mpsc::Sender<RenderJob> {
 /// Run `f` on a pooled render thread with a large stack (see
 /// `RENDER_STACK_BYTES`) and return its result, re-raising its panic.
 ///
-/// Threads are reused rather than spawned per call: every fresh thread that
-/// renders leaves per-thread engine state behind that is never freed
-/// (~16-37KB per call, geekmagic-hacs#209). A caller takes an idle worker or
+/// Threads are reused rather than spawned per call: Stylo deliberately leaks
+/// a per-thread bloom filter and style-sharing cache (`Box::leak` into TLS),
+/// so every fresh thread that styles a document costs ~16-37KB for the life
+/// of the process (geekmagic-hacs#209). A caller takes an idle worker or
 /// starts a new one when all are busy, so the pool grows to the peak number
 /// of concurrent renders and no further.
 fn with_render_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
