@@ -191,6 +191,7 @@ dependencies = [
  "data-url",
  "fontique",
  "gif",
+ "image",
  "jpeg-encoder",
  "parley",
  "peniko",

@@ -26,10 +26,14 @@ struct SyncProvider {
     allow_file_urls: bool,
 }
 
+/// Largest `file://` resource read, in bytes. `data:` URIs need no cap: their
+/// decoded size is bounded by the HTML that carries them.
+const MAX_FILE_BYTES: u64 = 64 << 20;
+
 impl NetProvider for SyncProvider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url;
-        match url.scheme() {
+        let bytes = match url.scheme() {
             "data" => {
                 let Ok(data_url) = data_url::DataUrl::process(url.as_str()) else {
                     return;
@@ -37,17 +41,48 @@ impl NetProvider for SyncProvider {
                 let Ok((bytes, _fragment)) = data_url.decode_to_vec() else {
                     return;
                 };
-                handler.bytes(url.to_string(), Bytes::from(bytes));
+                bytes
             }
             "file" if self.allow_file_urls => {
                 let Ok(path) = url.to_file_path() else { return };
-                if let Ok(contents) = std::fs::read(path) {
-                    handler.bytes(url.to_string(), Bytes::from(contents));
-                }
+                let Some(bytes) = read_capped(&path, MAX_FILE_BYTES) else {
+                    return;
+                };
+                bytes
             }
-            _ => {}
+            _ => return,
+        };
+        if image_too_large(&bytes) {
+            return;
         }
+        handler.bytes(url.to_string(), Bytes::from(bytes));
     }
+}
+
+/// Read a file, or `None` if it is unreadable or larger than `cap` bytes.
+/// Reads through `take` rather than trusting metadata, which reports 0 for
+/// endless device files like /dev/zero.
+fn read_capped(path: &std::path::Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(cap + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= cap).then_some(bytes)
+}
+
+/// Whether `bytes` is a raster image whose header declares more than
+/// `MAX_PIXELS` pixels. The engine decodes images in full with no pixel
+/// limit, so a few-KB PNG declaring 16k x 16k would allocate ~1GB; such
+/// images are dropped (rendered as missing) instead. Only headers are read.
+fn image_too_large(bytes: &[u8]) -> bool {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+        .is_some_and(|(w, h)| w as u64 * h as u64 > MAX_PIXELS)
 }
 
 fn parse_color_scheme(s: &str) -> PyResult<ColorScheme> {
