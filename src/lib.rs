@@ -217,41 +217,17 @@ fn set_default_family(collection: &mut parley::fontique::Collection, family: &st
 
 /// A pristine font collection: system fonts discovered once, bundled Inter
 /// registered and set as the default. Cloned per render — constructing a
-/// fresh collection each render both repeats the system-font scan and leaks
-/// (~120KB/call in fontique 0.10's platform scan), which matters for
-/// long-running processes.
+/// fresh collection each render both repeats the system-font scan (~25ms)
+/// and leaks (~115KB/call, still present in fontique 0.12; see
+/// `examples/leak.rs`), which matters for long-running processes.
 fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
     use parley::fontique::{Blob, Collection, CollectionOptions};
     static BASE: OnceLock<Mutex<Collection>> = OnceLock::new();
     BASE.get_or_init(|| {
-        // fontique's system-font scan can panic on degenerate hosts — e.g.
-        // fontconfig present but zero fonts installed makes its fontconfig
-        // backend unwrap a NoMatch (fontique <= 0.11.1; fixed on parley main,
-        // unreleased). Probe inside catch_unwind and fall back to the bundled
-        // font only, so a font-less container still renders. The hook swap
-        // keeps the probe's panic trace out of host logs; the init runs once
-        // and every render path funnels through this OnceLock, so the window
-        // where an unrelated thread's panic would go unreported is negligible.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let probed = std::panic::catch_unwind(|| {
-            Collection::new(CollectionOptions {
-                shared: false,
-                system_fonts: true,
-                ..Default::default()
-            })
-        });
-        std::panic::set_hook(prev_hook);
-        let mut collection = probed.unwrap_or_else(|_| {
-            eprintln!(
-                "blitz-py: system font enumeration failed (fontconfig installed but no \
-                 fonts?); continuing with bundled fonts only"
-            );
-            Collection::new(CollectionOptions {
-                shared: false,
-                system_fonts: false,
-                ..Default::default()
-            })
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+            ..Default::default()
         });
         // Register under the explicit name "Inter" (the file's own family
         // name is "Inter Variable") and wire the defaults by returned id —

@@ -1,8 +1,8 @@
 """Smoke check for hosts where system-font enumeration fails or is empty.
 
 Run on a container with fontconfig installed but zero fonts (fresh Home
-Assistant base images): blitz-py must fall back to the bundled font and
-still measure and render text, not raise pyo3_runtime.PanicException.
+Assistant base images): blitz-py must use the bundled font and still
+measure and render text, not raise pyo3_runtime.PanicException.
 """
 
 import blitz_py
@@ -16,4 +16,4 @@ _, _, rgba = blitz_py.render_rgba(
     height=60,
 )
 assert any(rgba[i] < 128 for i in range(0, len(rgba), 4)), "render is blank"
-print("fontless host: fallback OK, text rendered")
+print("fontless host: text rendered with bundled font")
