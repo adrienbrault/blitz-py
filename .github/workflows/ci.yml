@@ -11,6 +11,18 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
   test:
     strategy:
       fail-fast: false
@@ -18,10 +30,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - uses: Swatinem/rust-cache@v2
       - name: Build and install
         shell: bash
@@ -34,7 +46,7 @@ jobs:
       - name: Golden hashes
         shell: bash
         run: python scripts/golden.py | tee "golden-${{ matrix.os }}.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: golden-${{ matrix.os }}
           path: golden-*.json
@@ -43,7 +55,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: golden-*
           path: goldens
@@ -77,34 +89,65 @@ jobs:
           - target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
             name: musllinux-aarch64
-          # armv7 (32-bit) is deliberately absent: anyrender 0.11 fails to
-          # compile on 32-bit targets (a size_of assertion assumes 64-bit
-          # pointers). Revisit when the engine stack supports 32-bit.
+          # 32-bit ARM (Raspberry Pi OS 32-bit). Blocked until anyrender
+          # 0.14 gained a 32-bit FilterEffect size assertion.
+          - target: armv7
+            manylinux: "2014"
+            name: manylinux-armv7
+          - target: armv7-unknown-linux-musleabihf
+            manylinux: musllinux_1_2
+            name: musllinux-armv7
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist
           sccache: "true"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.name }}
           path: dist
 
+  # The abi3 wheel on every supported CPython (3.14 runs in `test`).
+  python-versions:
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.15"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-manylinux-x86_64
+          path: dist
+      - run: pip install dist/*.whl pytest
+      - run: python -m pytest tests/ -q
+
+  # Home Assistant containers are Alpine (musl) on recent CPython.
   musl-test:
     needs: linux-wheels
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-musllinux-x86_64
           path: dist
       - name: Test the musl wheel in Alpine
         run: |
-          docker run --rm -v "$PWD":/io -w /io python:3.12-alpine sh -c '
+          docker run --rm -v "$PWD":/io -w /io python:${{ matrix.python }}-alpine sh -c '
             pip install -q dist/*.whl pytest
             python -m pytest tests/ -q'
 
@@ -115,18 +158,37 @@ jobs:
     needs: linux-wheels
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-musllinux-x86_64
           path: dist
       - name: Render on fontconfig-with-no-fonts Alpine
         run: |
-          docker run --rm -v "$PWD":/io -w /io python:3.12-alpine sh -c '
+          docker run --rm -v "$PWD":/io -w /io python:3.14-alpine sh -c '
             apk add -q fontconfig
             test "$(fc-list | wc -l)" = 0 || { echo "host has fonts; test is vacuous"; exit 1; }
             pip install -q dist/*.whl
             python scripts/fontless_check.py'
+
+  # 32-bit ARM under QEMU: proves the armv7 wheel runs, not just builds.
+  armv7-test:
+    needs: linux-wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-musllinux-armv7
+          path: dist
+      - name: Test the armv7 musl wheel in Alpine
+        run: |
+          docker run --rm --platform linux/arm/v7 -v "$PWD":/io -w /io python:3.14-alpine sh -c '
+            pip install -q dist/*.whl pytest
+            python -m pytest tests/ -q'
 
   macos-wheels:
     runs-on: macos-latest
@@ -135,13 +197,13 @@ jobs:
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
           sccache: "true"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.target }}
           path: dist
@@ -159,13 +221,13 @@ jobs:
             # interpreter so maturin uses its bundled sysconfig for abi3.
             args: --release --out dist -i python3.12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: ${{ matrix.args }}
           sccache: "true"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.target }}
           path: dist
@@ -173,25 +235,25 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, linux-wheels, musl-test, fontless-test, macos-wheels, windows-wheels, sdist]
+    needs: [lint, test, python-versions, linux-wheels, musl-test, fontless-test, armv7-test, macos-wheels, windows-wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           # Only distributions — the test jobs also upload golden-*.json
           # hash artifacts, which twine would reject.

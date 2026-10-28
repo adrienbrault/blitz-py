@@ -14,7 +14,7 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
@@ -24,7 +24,7 @@ jobs:
         env:
           FUZZ_SECONDS: ${{ inputs.seconds }}
         run: cargo +nightly fuzz run render -- -max_total_time="$FUZZ_SECONDS" -max_len=65536
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-artifacts
