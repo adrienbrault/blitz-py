@@ -636,18 +636,29 @@ fn wrap_balanced(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Per-document resource and font options, shared by every render entry
+/// point (module functions, `Template`, html layers).
+struct DocOptions {
+    base_url: Option<String>,
+    fonts: Vec<Vec<u8>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+}
+
 fn build_document(
     html: &str,
     width: u32,
     height: u32,
     scale: f32,
     color_scheme: ColorScheme,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<HtmlDocument> {
+    let DocOptions {
+        base_url,
+        fonts,
+        default_font_family,
+        allow_file_urls,
+    } = opts;
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
@@ -726,7 +737,6 @@ fn paint_frame(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_impl(
     html: &str,
     width: u32,
@@ -734,25 +744,12 @@ fn render_impl(
     scale: f32,
     color_scheme: ColorScheme,
     background: Option<blitz_dom::util::Color>,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<RenderResult> {
     // With height=None, lay out against a provisional viewport, then size the
     // canvas to the content.
     let provisional_height = height.unwrap_or(800);
-    let mut document = build_document(
-        html,
-        width,
-        provisional_height,
-        scale,
-        color_scheme,
-        base_url,
-        fonts,
-        default_font_family,
-        allow_file_urls,
-    )?;
+    let mut document = build_document(html, width, provisional_height, scale, color_scheme, opts)?;
     let physical_width = (width as f64 * scale as f64) as u32;
 
     // First resolve dispatches resource loads (delivered synchronously by
@@ -807,22 +804,9 @@ fn render_frames_impl(
     scale: f32,
     color_scheme: ColorScheme,
     background: Option<blitz_dom::util::Color>,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
-    let mut document = build_document(
-        html,
-        width,
-        height,
-        scale,
-        color_scheme,
-        base_url,
-        fonts,
-        default_font_family,
-        allow_file_urls,
-    )?;
+    let mut document = build_document(html, width, height, scale, color_scheme, opts)?;
     let physical_width = (width as f64 * scale as f64) as u32;
     let physical_height = (height as f64 * scale as f64) as u32;
 
@@ -1086,10 +1070,12 @@ fn render_png<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                },
             )?;
             Ok(encode_png(&result))
         })
@@ -1133,10 +1119,12 @@ fn render_rgba<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                },
             )
         })
     })?;
@@ -1192,10 +1180,12 @@ fn render_frames<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                },
             )
         })
     })?;
@@ -1240,10 +1230,12 @@ fn render_jpeg<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                },
             )?;
             encode_jpeg(&result, quality)
         })
@@ -1290,10 +1282,12 @@ fn render_gif<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                },
             )?;
             encode_gif(w, h, frames, &times, colors)
         })
@@ -1761,7 +1755,12 @@ impl Template {
         let color_scheme = parse_color_scheme(color_scheme)?;
         let background = parse_background(background)?;
         let html = compose_html(html, css, css_vars)?;
-        let fonts = fonts.unwrap_or_default();
+        let opts = DocOptions {
+            base_url,
+            fonts: fonts.unwrap_or_default(),
+            default_font_family,
+            allow_file_urls,
+        };
 
         let (tx, rx) = std::sync::mpsc::channel::<TemplateCmd>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -1770,17 +1769,7 @@ impl Template {
             .name("blitz-py-template".into())
             .stack_size(64 << 20)
             .spawn(move || {
-                let built = build_document(
-                    &html,
-                    width,
-                    height,
-                    scale,
-                    color_scheme,
-                    base_url,
-                    fonts,
-                    default_font_family,
-                    allow_file_urls,
-                );
+                let built = build_document(&html, width, height, scale, color_scheme, opts);
                 match built {
                     Ok(mut document) => {
                         document.as_mut().resolve(0.0);
@@ -1982,10 +1971,7 @@ enum LayerJob {
         scale: f32,
         color_scheme: ColorScheme,
         background: Option<blitz_dom::util::Color>,
-        base_url: Option<String>,
-        fonts: Vec<Vec<u8>>,
-        default_font_family: Option<String>,
-        allow_file_urls: bool,
+        opts: DocOptions,
         time: f64,
     },
     Tpl {
@@ -2078,10 +2064,12 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                     scale,
                     color_scheme,
                     background,
-                    base_url: dict_get(dict, "base_url")?,
-                    fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
-                    default_font_family: dict_get(dict, "default_font_family")?,
-                    allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                    opts: DocOptions {
+                        base_url: dict_get(dict, "base_url")?,
+                        fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
+                        default_font_family: dict_get(dict, "default_font_family")?,
+                        allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                    },
                     time,
                 }
             }
@@ -2193,10 +2181,7 @@ fn run_layers(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts,
-                default_font_family,
-                allow_file_urls,
+                opts,
                 time,
             } => {
                 let (w, h, mut frames) = render_frames_impl(
@@ -2207,10 +2192,7 @@ fn run_layers(
                     scale,
                     color_scheme,
                     background,
-                    base_url,
-                    fonts,
-                    default_font_family,
-                    allow_file_urls,
+                    opts,
                 )?;
                 RenderResult {
                     rgba: frames.remove(0),
