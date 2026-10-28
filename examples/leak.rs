@@ -12,7 +12,8 @@ use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
 
-const HTML: &str = "<body style='background:#123'><div style='width:100px;height:100px;background:#f00'></div>";
+const HTML: &str =
+    "<body style='background:#123'><div style='width:100px;height:100px;background:#f00'></div>";
 const W: u32 = 480;
 const H: u32 = 480;
 
@@ -21,7 +22,11 @@ fn rss_mb() -> f64 {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
         .unwrap();
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap() / 1024.0
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .unwrap()
+        / 1024.0
 }
 
 fn font_ctx(register: bool) -> parley::FontContext {
@@ -86,4 +91,3 @@ fn main() {
         }
     }
 }
-

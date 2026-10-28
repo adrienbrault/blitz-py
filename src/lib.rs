@@ -6,15 +6,15 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use anyrender::{PaintScene as _, render_to_buffer};
+use anyrender::{render_to_buffer, PaintScene as _};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::DocumentConfig;
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 use blitz_traits::shell::{ColorScheme, Viewport};
-use peniko::Fill;
 use peniko::kurbo::Rect;
+use peniko::Fill;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -77,7 +77,12 @@ fn parse_hex_rgba(s: &str) -> PyResult<(u8, u8, u8, u8)> {
             let d = |c: &str| parse(c).map(|v| v * 17);
             (d(&hex[0..1])?, d(&hex[1..2])?, d(&hex[2..3])?, 255)
         }
-        6 => (parse(&hex[0..2])?, parse(&hex[2..4])?, parse(&hex[4..6])?, 255),
+        6 => (
+            parse(&hex[0..2])?,
+            parse(&hex[2..4])?,
+            parse(&hex[4..6])?,
+            255,
+        ),
         8 => (
             parse(&hex[0..2])?,
             parse(&hex[2..4])?,
@@ -291,8 +296,7 @@ fn register_fonts(
             .map_err(|_| PyValueError::new_err("font collection lock poisoned"))?;
         let mut names = Vec::new();
         for font in fonts {
-            let registered =
-                base.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
+            let registered = base.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
             for (id, _) in registered {
                 if let Some(name) = base.family_name(id) {
                     names.push(name.to_string());
@@ -413,7 +417,16 @@ fn ellipsize(
     let fonts = fonts.unwrap_or_default();
     py.detach(move || {
         let width = |s: &str| {
-            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+            text_layout(
+                s,
+                &family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                None,
+                &fonts,
+            )
+            .width()
         };
         if width(&text) <= max_width {
             return Ok(text);
@@ -480,8 +493,12 @@ fn line_clamp(
         let (mut lo, mut hi) = (0usize, chars.len());
         while lo < hi {
             let mid = (lo + hi).div_ceil(2);
-            let candidate: String =
-                chars[..mid].iter().collect::<String>().trim_end().to_string() + &ellipsis;
+            let candidate: String = chars[..mid]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+                + &ellipsis;
             if line_count(&candidate) <= max_lines {
                 lo = mid;
             } else {
@@ -580,7 +597,16 @@ fn wrap_balanced(
             return Ok(vec![]);
         }
         let measure = |s: &str| {
-            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+            text_layout(
+                s,
+                &family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                None,
+                &fonts,
+            )
+            .width()
         };
         // Greedy break at a given width; None if any single word overflows.
         let greedy = |limit: f32| -> Option<Vec<String>> {
@@ -765,18 +791,21 @@ fn render_impl(
             let ph = ph as u32;
             // Re-lay out with the real viewport so vh units and % heights
             // resolve against the final canvas.
-            document.as_mut().set_viewport(Viewport::new(
-                physical_width,
-                ph,
-                scale,
-                color_scheme,
-            ));
+            document
+                .as_mut()
+                .set_viewport(Viewport::new(physical_width, ph, scale, color_scheme));
             document.as_mut().resolve(0.0);
             ph
         }
     };
 
-    let rgba = paint_frame(&mut document, scale, physical_width, physical_height, background);
+    let rgba = paint_frame(
+        &mut document,
+        scale,
+        physical_width,
+        physical_height,
+        background,
+    );
 
     Ok(RenderResult {
         rgba,
@@ -1065,19 +1094,19 @@ fn render_png<'py>(
     let html = compose_html(html, css, css_vars)?;
     let result = py.detach(|| -> PyResult<Vec<u8>> {
         with_render_stack(|| {
-        let result = render_impl(
-            &html,
-            width,
-            height,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )?;
-        Ok(encode_png(&result))
+            let result = render_impl(
+                &html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts.unwrap_or_default(),
+                default_font_family,
+                allow_file_urls,
+            )?;
+            Ok(encode_png(&result))
         })
     })?;
     Ok(PyBytes::new(py, &result))
@@ -1112,25 +1141,21 @@ fn render_rgba<'py>(
     let html = compose_html(html, css, css_vars)?;
     let result = py.detach(|| {
         with_render_stack(|| {
-        render_impl(
-            &html,
-            width,
-            height,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )
+            render_impl(
+                &html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts.unwrap_or_default(),
+                default_font_family,
+                allow_file_urls,
+            )
         })
     })?;
-    Ok((
-        result.width,
-        result.height,
-        PyBytes::new(py, &result.rgba),
-    ))
+    Ok((result.width, result.height, PyBytes::new(py, &result.rgba)))
 }
 
 /// Render an HTML string at multiple animation timestamps.
@@ -1174,19 +1199,19 @@ fn render_frames<'py>(
     validate_times(&times)?;
     let (w, h, frames) = py.detach(|| {
         with_render_stack(|| {
-        render_frames_impl(
-            &html,
-            width,
-            height,
-            &times,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )
+            render_frames_impl(
+                &html,
+                width,
+                height,
+                &times,
+                scale,
+                color_scheme,
+                background,
+                base_url,
+                fonts.unwrap_or_default(),
+                default_font_family,
+                allow_file_urls,
+            )
         })
     })?;
     let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
@@ -1335,9 +1360,9 @@ fn measure_text(
             parley::style::FontFamily::Source(std::borrow::Cow::Borrowed(family.as_str())),
         ));
         builder.push_default(parley::StyleProperty::FontSize(font_size));
-        builder.push_default(parley::StyleProperty::FontWeight(
-            parley::FontWeight::new(font_weight),
-        ));
+        builder.push_default(parley::StyleProperty::FontWeight(parley::FontWeight::new(
+            font_weight,
+        )));
         builder.push_default(parley::StyleProperty::LetterSpacing(letter_spacing));
         let mut layout = builder.build(&text);
         layout.break_all_lines(max_width);
@@ -1397,7 +1422,9 @@ fn build_id_map(
     let mut map = std::collections::HashMap::new();
     let mut stack = vec![doc.root_element().id];
     while let Some(node_id) = stack.pop() {
-        let Some(node) = doc.get_node(node_id) else { continue };
+        let Some(node) = doc.get_node(node_id) else {
+            continue;
+        };
         if let Some(el) = node.element_data() {
             if let Some(id_attr) = el.attr(blitz_dom::local_name!("id")) {
                 let text_child = match node.children.as_slice() {
@@ -1475,7 +1502,9 @@ impl TemplateWorker {
         );
         let mut current = node.parent;
         while let Some(parent_id) = current {
-            let Some(parent) = doc.get_node(parent_id) else { break };
+            let Some(parent) = doc.get_node(parent_id) else {
+                break;
+            };
             x += parent.final_layout().location.x as f64;
             y += parent.final_layout().location.y as f64;
             current = parent.parent;
@@ -1497,7 +1526,12 @@ impl TemplateWorker {
                     });
                     let _ = reply.send(result);
                 }
-                TemplateCmd::SetStyle { id, name, value, reply } => {
+                TemplateCmd::SetStyle {
+                    id,
+                    name,
+                    value,
+                    reply,
+                } => {
                     // Rewrite the `style` attribute rather than using
                     // `set_style_property`: property mutation missed layout
                     // invalidation in blitz 0.3.0-beta.1 (fixed on main,
@@ -1523,7 +1557,12 @@ impl TemplateWorker {
                     });
                     let _ = reply.send(result);
                 }
-                TemplateCmd::SetAttr { id, name, value, reply } => {
+                TemplateCmd::SetAttr {
+                    id,
+                    name,
+                    value,
+                    reply,
+                } => {
                     let result = self.lookup(&id).map(|(node_id, _)| {
                         let qual =
                             blitz_dom::QualName::new(None, blitz_dom::ns!(), name.as_str().into());
@@ -1662,7 +1701,10 @@ impl Template {
 
     fn render(&self, py: Python<'_>, time: f64) -> PyResult<RenderResult> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::Render { time, reply: reply_tx })?;
+        self.send(TemplateCmd::Render {
+            time,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))
     }
@@ -1673,7 +1715,10 @@ impl Template {
         times: Vec<f64>,
     ) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::RenderFrames { times, reply: reply_tx })?;
+        self.send(TemplateCmd::RenderFrames {
+            times,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))
     }
@@ -1785,7 +1830,12 @@ impl Template {
             )));
         }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
-        self.mutate(py, |reply| TemplateCmd::SetStyle { id, name, value, reply })
+        self.mutate(py, |reply| TemplateCmd::SetStyle {
+            id,
+            name,
+            value,
+            reply,
+        })
     }
 
     /// Set an attribute on the element with the given `id`.
@@ -1798,7 +1848,12 @@ impl Template {
             ));
         }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
-        self.mutate(py, |reply| TemplateCmd::SetAttr { id, name, value, reply })
+        self.mutate(py, |reply| TemplateCmd::SetAttr {
+            id,
+            name,
+            value,
+            reply,
+        })
     }
 
     /// Replace the children of the element with the given `id` by parsing an
@@ -1812,7 +1867,11 @@ impl Template {
     /// of the elements with ids `temp` and `hum` in one round-trip.
     /// Validates every id before applying — a failing batch changes nothing.
     #[pyo3(signature = (**kwargs))]
-    fn update(&self, py: Python<'_>, kwargs: Option<Bound<'_, pyo3::types::PyDict>>) -> PyResult<()> {
+    fn update(
+        &self,
+        py: Python<'_>,
+        kwargs: Option<Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<()> {
         let Some(kwargs) = kwargs else { return Ok(()) };
         let mut updates = Vec::with_capacity(kwargs.len());
         for (k, v) in kwargs.iter() {
@@ -1871,7 +1930,10 @@ impl Template {
     fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<(f64, f64, f64, f64)> {
         let id = id.to_string();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::GetBox { id, reply: reply_tx })?;
+        self.send(TemplateCmd::GetBox {
+            id,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))?
             .map_err(PyValueError::new_err)
@@ -2001,9 +2063,9 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                     .ok_or_else(|| PyValueError::new_err("html layer requires 'height'"))?;
                 let scale: f32 = dict_get(dict, "scale")?.unwrap_or(1.0);
                 validate(width, Some(height), scale)?;
-                let color_scheme =
-                    parse_color_scheme(&dict_get::<String>(dict, "color_scheme")?
-                        .unwrap_or_else(|| "light".into()))?;
+                let color_scheme = parse_color_scheme(
+                    &dict_get::<String>(dict, "color_scheme")?.unwrap_or_else(|| "light".into()),
+                )?;
                 // Layers default to a transparent background so they stack.
                 let background =
                     parse_background(dict_get::<String>(dict, "background")?.as_deref())?;
@@ -2036,7 +2098,14 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                 ));
             }
         };
-        specs.push(LayerSpec { job, x, y, opacity, blur, tint });
+        specs.push(LayerSpec {
+            job,
+            x,
+            y,
+            opacity,
+            blur,
+            tint,
+        });
     }
     Ok(specs)
 }
@@ -2076,9 +2145,7 @@ fn box_blur(buf: &mut [u8], w: usize, h: usize, radius: f32) {
         // Vertical pass tmp -> buf
         for x in 0..w {
             let mut sums = [0u32; 4];
-            let window = |y: isize| -> usize {
-                (y.clamp(0, h as isize - 1) as usize * w + x) * 4
-            };
+            let window = |y: isize| -> usize { (y.clamp(0, h as isize - 1) as usize * w + x) * 4 };
             for y in -(r as isize)..=(r as isize) {
                 let p = window(y);
                 for c in 0..4 {
@@ -2147,12 +2214,19 @@ fn run_layers(
                     default_font_family,
                     allow_file_urls,
                 )?;
-                RenderResult { rgba: frames.remove(0), width: w, height: h }
+                RenderResult {
+                    rgba: frames.remove(0),
+                    width: w,
+                    height: h,
+                }
             }
             LayerJob::Tpl { sender, time } => {
                 let (reply_tx, reply_rx) = std::sync::mpsc::channel();
                 sender
-                    .send(TemplateCmd::Render { time, reply: reply_tx })
+                    .send(TemplateCmd::Render {
+                        time,
+                        reply: reply_tx,
+                    })
                     .map_err(|_| PyValueError::new_err("template worker has shut down"))?;
                 reply_rx
                     .recv()
@@ -2202,13 +2276,16 @@ fn run_layers(
                 }
                 let inv = 255 - sa;
                 for c in 0..4 {
-                    canvas[d + c] =
-                        (rgba[s + c] as u32 + (canvas[d + c] as u32 * inv) / 255) as u8;
+                    canvas[d + c] = (rgba[s + c] as u32 + (canvas[d + c] as u32 * inv) / 255) as u8;
                 }
             }
         }
     }
-    Ok(RenderResult { rgba: canvas, width, height })
+    Ok(RenderResult {
+        rgba: canvas,
+        width,
+        height,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
