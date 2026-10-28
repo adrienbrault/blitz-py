@@ -279,7 +279,6 @@ fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
         let mut collection = Collection::new(CollectionOptions {
             shared: false,
             system_fonts: true,
-            ..Default::default()
         });
         // Register under the explicit name "Inter" (the file's own family
         // name is "Inter Variable") and wire the defaults by returned id —
@@ -963,7 +962,9 @@ fn encode_gif(
     let nq = color_quant::NeuQuant::new(10, (colors as usize).min(255), &samples);
     let mut palette_rgb: Vec<u8> = nq
         .color_map_rgba()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|c| [c[0], c[1], c[2]])
         .collect();
     // Reserve one extra palette slot as the inter-frame "unchanged" marker:
@@ -982,7 +983,9 @@ fn encode_gif(
         .into_iter()
         .map(|frame| {
             frame
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|px| {
                     let key = [px[0], px[1], px[2]];
                     *cache
@@ -1440,6 +1443,9 @@ fn measure_text(
     })
 }
 
+/// A laid-out element rect `(x, y, width, height)` in CSS pixels.
+type CssRect = (f64, f64, f64, f64);
+
 enum TemplateCmd {
     SetText {
         id: String,
@@ -1477,10 +1483,10 @@ enum TemplateCmd {
     },
     GetBox {
         id: String,
-        reply: std::sync::mpsc::Sender<Result<(f64, f64, f64, f64), String>>,
+        reply: std::sync::mpsc::Sender<Result<CssRect, String>>,
     },
     Boxes {
-        reply: std::sync::mpsc::Sender<Vec<(String, (f64, f64, f64, f64))>>,
+        reply: std::sync::mpsc::Sender<Vec<(String, CssRect)>>,
     },
 }
 
@@ -1557,7 +1563,7 @@ impl TemplateWorker {
     }
 
     /// Absolute laid-out rect of a node in CSS pixels (post-resolve).
-    fn abs_box(&self, node_id: blitz_dom::NodeId) -> (f64, f64, f64, f64) {
+    fn abs_box(&self, node_id: blitz_dom::NodeId) -> CssRect {
         let doc = self.document.as_ref();
         let Some(node) = doc.get_node(node_id) else {
             return (0.0, 0.0, 0.0, 0.0);
@@ -2007,7 +2013,7 @@ impl Template {
 
     /// Final laid-out rect of the element with this `id`, as
     /// `(x, y, width, height)` in CSS pixels.
-    fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<(f64, f64, f64, f64)> {
+    fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<CssRect> {
         let id = id.to_string();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.send(TemplateCmd::GetBox {
@@ -2021,10 +2027,7 @@ impl Template {
 
     /// Laid-out rects of every element with an `id`, as
     /// `{id: (x, y, width, height)}` in CSS pixels.
-    fn boxes(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<std::collections::HashMap<String, (f64, f64, f64, f64)>> {
+    fn boxes(&self, py: Python<'_>) -> PyResult<std::collections::HashMap<String, CssRect>> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.send(TemplateCmd::Boxes { reply: reply_tx })?;
         let boxes = py
@@ -2259,7 +2262,7 @@ fn run_layers(
     let (br, bg_, bb, ba) = background;
     let a = ba as u32;
     let mut canvas = vec![0u8; cw * ch * 4];
-    for px in canvas.chunks_exact_mut(4) {
+    for px in canvas.as_chunks_mut::<4>().0 {
         px[0] = ((br as u32 * a) / 255) as u8;
         px[1] = ((bg_ as u32 * a) / 255) as u8;
         px[2] = ((bb as u32 * a) / 255) as u8;
@@ -2315,7 +2318,7 @@ fn run_layers(
         }
         if let Some((tr, tg, tb)) = spec.tint {
             // Recolor keeping coverage: rgb := tint * alpha (premultiplied).
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 let a = px[3] as u32;
                 px[0] = ((tr as u32 * a) / 255) as u8;
                 px[1] = ((tg as u32 * a) / 255) as u8;
@@ -2324,10 +2327,8 @@ fn run_layers(
         }
         if spec.opacity < 1.0 {
             let f = (spec.opacity * 255.0) as u32;
-            for px in rgba.chunks_exact_mut(4) {
-                for c in 0..4 {
-                    px[c] = ((px[c] as u32 * f) / 255) as u8;
-                }
+            for v in rgba.iter_mut() {
+                *v = ((*v as u32 * f) / 255) as u8;
             }
         }
 
