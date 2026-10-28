@@ -15,6 +15,9 @@ fuzz_target!(|data: &[u8]| {
     let mut doc = HtmlDocument::from_html(
         html,
         DocumentConfig {
+            // Same hierarchical base as the binding: the engine's default
+            // base panics on relative URLs (a known upstream issue).
+            base_url: Some("blitz-py:///".into()),
             viewport: Some(Viewport::new(64, 64, 1.0, ColorScheme::Light)),
             ..Default::default()
         },

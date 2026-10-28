@@ -1,5 +1,6 @@
 """Hostile-input corpus: rendering must never crash, whatever the input."""
 
+import os
 import random
 import string
 
@@ -74,3 +75,72 @@ class TestHostileInputs:
 
     def test_extremely_long_word(self):
         assert render("<p>" + "x" * 100_000 + "</p>")
+
+    def test_relative_urls_without_base_url(self):
+        # Without base_url, relative URLs used to panic in the engine
+        # (pyo3_runtime.PanicException, which `except Exception` misses).
+        assert render(
+            "<img src='logo.png'><img src='//host/x.png'><img src='/abs.png'>"
+            "<link rel=stylesheet href='a.css'><iframe src='frame.html'></iframe>"
+            "<style>@font-face{font-family:X;src:url(x.ttf)}</style>"
+            "<div style='background:url(bg.png)'>x</div>"
+        )
+        tpl = blitz_py.Template("<img src='logo.png'>", width=32, height=32)
+        assert tpl.render_png()
+
+
+class TestBaseUrl:
+    @pytest.mark.parametrize("bad", ["not a url", "mailto:x@y.z", "data:text/html,x"])
+    def test_rejects_unusable_base_url(self, bad):
+        with pytest.raises(ValueError, match="base_url"):
+            blitz_py.render_png("<img src='a.png'>", width=8, height=8, base_url=bad)
+
+    def test_accepts_hierarchical_base_url(self):
+        assert blitz_py.render_png(
+            "<img src='a.png'>", width=8, height=8, base_url="https://example.com/x/"
+        )
+
+
+def _gray_png_data_uri(w: int, h: int) -> str:
+    """A valid all-black grayscale PNG; huge sizes compress to a few KB."""
+    import base64
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    raw = zlib.compress(b"\x00" * ((w + 1) * h), 9)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+        + chunk(b"IDAT", raw)
+        + chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+class TestResourceLimits:
+    def test_decompression_bomb_image_is_dropped(self):
+        # 9000x9000 declares 81M pixels (> the 64M output limit): the engine
+        # would decode it in full (~400MB); it must be skipped as missing.
+        tpl = blitz_py.Template(
+            f"<img id=i src='{_gray_png_data_uri(9000, 9000)}'>", width=64, height=64
+        )
+        assert tpl.get_box("i")[2] == 0
+
+    def test_normal_image_still_loads(self):
+        tpl = blitz_py.Template(
+            f"<img id=i src='{_gray_png_data_uri(20, 10)}'>", width=64, height=64
+        )
+        assert tpl.get_box("i")[2:] == (20, 10)
+
+    @pytest.mark.skipif(not os.path.exists("/dev/zero"), reason="needs /dev/zero")
+    def test_endless_file_url_is_bounded(self):
+        assert blitz_py.render_png(
+            "<img src='file:///dev/zero'><link rel=stylesheet href='file:///dev/zero'>",
+            width=8,
+            height=8,
+            allow_file_urls=True,
+        )

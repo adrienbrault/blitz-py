@@ -1,6 +1,6 @@
 [package]
 name = "blitz-py"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Python bindings for the Blitz HTML/CSS rendering engine"
@@ -11,26 +11,27 @@ name = "blitz_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.27", features = ["abi3-py310", "generate-import-lib"] }
-# Blitz is pinned to a `main` commit (post-0.3.0-beta.1, no newer crates.io
-# release yet) for ~140 layout/robustness fixes; see docs/UPSTREAM.md. The
-# anyrender/anyrender_vello_cpu/parley versions below must match that commit's
-# workspace Cargo.toml. Return to a crates.io version at the next release.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730", default-features = false }
-blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
-blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
-blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "01a6c4b9282c25b76616d71863ea55a03c48a730" }
-anyrender = "0.13"
-anyrender_vello_cpu = "0.16"
-parley = "0.11"
+pyo3 = { version = "0.30", features = ["abi3-py310", "generate-import-lib"] }
+# The anyrender/anyrender_vello_cpu/parley versions below must match the
+# blitz release's workspace Cargo.toml; re-pair on every bump (docs/UPSTREAM.md).
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["woff"] }
+blitz-html = "=0.3.0-beta.4"
+blitz-paint = "=0.3.0-beta.4"
+blitz-traits = "=0.3.0-beta.4"
+anyrender = "0.14"
+anyrender_vello_cpu = "0.18"
+parley = "0.12"
 # fontconfig-dlopen: load fontconfig at runtime if present instead of linking
 # it. Keeps Linux wheels free of a libfontconfig link dependency (forbidden by
 # manylinux/musllinux policies) while still discovering system fonts on
 # distros that have it.
-fontique = { version = "0.11", features = ["fontconfig-dlopen"] }
+fontique = { version = "0.12", features = ["fontconfig-dlopen"] }
 peniko = "0.6"
 data-url = "0.3"
-png = "0.17"
+# Header-only dimension sniffing for the decode-bomb guard. Same version and
+# formats blitz-dom decodes with, so this adds no code to the build.
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+png = "0.18"
 jpeg-encoder = "0.7"
 color_quant = "2"
 gif = "0.14"

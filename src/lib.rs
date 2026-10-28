@@ -6,30 +6,45 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use anyrender::{PaintScene as _, render_to_buffer};
+use anyrender::{render_to_buffer, PaintScene as _};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::DocumentConfig;
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
-use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
+use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request, Url};
 use blitz_traits::shell::{ColorScheme, Viewport};
-use peniko::Fill;
 use peniko::kurbo::Rect;
+use peniko::Fill;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-/// A synchronous resource provider. Resolves `data:` URIs (and optionally
-/// `file://` URLs) inline on the calling thread. All other schemes are
-/// ignored, keeping rendering deterministic and network-free.
+/// A synchronous resource provider. Serves caller-supplied `resources`,
+/// `data:` URIs and (optionally) `file://` URLs inline on the calling
+/// thread. All other URLs are ignored, keeping rendering deterministic and
+/// network-free.
 struct SyncProvider {
     allow_file_urls: bool,
+    /// In-memory resources keyed by absolute URL (fragment stripped).
+    resources: std::collections::HashMap<String, Bytes>,
 }
+
+/// Largest `file://` resource read, in bytes. `data:` URIs need no cap: their
+/// decoded size is bounded by the HTML that carries them.
+const MAX_FILE_BYTES: u64 = 64 << 20;
 
 impl NetProvider for SyncProvider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url;
-        match url.scheme() {
+        let mut key = url.clone();
+        key.set_fragment(None);
+        if let Some(bytes) = self.resources.get(key.as_str()) {
+            if !image_too_large(bytes) {
+                handler.bytes(url.to_string(), bytes.clone());
+            }
+            return;
+        }
+        let bytes = match url.scheme() {
             "data" => {
                 let Ok(data_url) = data_url::DataUrl::process(url.as_str()) else {
                     return;
@@ -37,17 +52,48 @@ impl NetProvider for SyncProvider {
                 let Ok((bytes, _fragment)) = data_url.decode_to_vec() else {
                     return;
                 };
-                handler.bytes(url.to_string(), Bytes::from(bytes));
+                bytes
             }
             "file" if self.allow_file_urls => {
                 let Ok(path) = url.to_file_path() else { return };
-                if let Ok(contents) = std::fs::read(path) {
-                    handler.bytes(url.to_string(), Bytes::from(contents));
-                }
+                let Some(bytes) = read_capped(&path, MAX_FILE_BYTES) else {
+                    return;
+                };
+                bytes
             }
-            _ => {}
+            _ => return,
+        };
+        if image_too_large(&bytes) {
+            return;
         }
+        handler.bytes(url.to_string(), Bytes::from(bytes));
     }
+}
+
+/// Read a file, or `None` if it is unreadable or larger than `cap` bytes.
+/// Reads through `take` rather than trusting metadata, which reports 0 for
+/// endless device files like /dev/zero.
+fn read_capped(path: &std::path::Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(cap + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= cap).then_some(bytes)
+}
+
+/// Whether `bytes` is a raster image whose header declares more than
+/// `MAX_PIXELS` pixels. The engine decodes images in full with no pixel
+/// limit, so a few-KB PNG declaring 16k x 16k would allocate ~1GB; such
+/// images are dropped (rendered as missing) instead. Only headers are read.
+fn image_too_large(bytes: &[u8]) -> bool {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+        .is_some_and(|(w, h)| w as u64 * h as u64 > MAX_PIXELS)
 }
 
 fn parse_color_scheme(s: &str) -> PyResult<ColorScheme> {
@@ -77,7 +123,12 @@ fn parse_hex_rgba(s: &str) -> PyResult<(u8, u8, u8, u8)> {
             let d = |c: &str| parse(c).map(|v| v * 17);
             (d(&hex[0..1])?, d(&hex[1..2])?, d(&hex[2..3])?, 255)
         }
-        6 => (parse(&hex[0..2])?, parse(&hex[2..4])?, parse(&hex[4..6])?, 255),
+        6 => (
+            parse(&hex[0..2])?,
+            parse(&hex[2..4])?,
+            parse(&hex[4..6])?,
+            255,
+        ),
         8 => (
             parse(&hex[0..2])?,
             parse(&hex[2..4])?,
@@ -116,8 +167,14 @@ static DEFAULT_FONT: &[u8] = include_bytes!("../assets/InterVariable.ttf");
 const MAX_DIM: u64 = 16_384;
 /// Largest permitted physical pixel count (256MB of RGBA).
 const MAX_PIXELS: u64 = 64_000_000;
+/// Largest permitted physical pixel count summed over all frames of one
+/// animation call (~1GB of RGBA): frames are held in memory until encoded
+/// or returned, so `MAX_PIXELS` per frame alone does not bound the call.
+const MAX_ANIMATION_PIXELS: u64 = 4 * MAX_PIXELS;
 
-fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<()> {
+/// Validate output dimensions; returns the physical pixel count (per row
+/// when `height` is `None`).
+fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<u64> {
     if width == 0 || height == Some(0) {
         return Err(PyValueError::new_err("width and height must be > 0"));
     }
@@ -136,7 +193,7 @@ fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<()> {
             "physical output {pw}x{ph} exceeds {MAX_PIXELS} pixels"
         )));
     }
-    Ok(())
+    Ok(pw * ph)
 }
 
 /// Compose the final HTML: user `css` and `css_vars` are appended in a
@@ -212,41 +269,16 @@ fn set_default_family(collection: &mut parley::fontique::Collection, family: &st
 
 /// A pristine font collection: system fonts discovered once, bundled Inter
 /// registered and set as the default. Cloned per render — constructing a
-/// fresh collection each render both repeats the system-font scan and leaks
-/// (~120KB/call in fontique 0.10's platform scan), which matters for
-/// long-running processes.
+/// fresh collection each render both repeats the system-font scan (~25ms)
+/// and leaks (~115KB/call, still present in fontique 0.12; see
+/// `examples/leak.rs`), which matters for long-running processes.
 fn base_mutex() -> &'static Mutex<parley::fontique::Collection> {
     use parley::fontique::{Blob, Collection, CollectionOptions};
     static BASE: OnceLock<Mutex<Collection>> = OnceLock::new();
     BASE.get_or_init(|| {
-        // fontique's system-font scan can panic on degenerate hosts — e.g.
-        // fontconfig present but zero fonts installed makes its fontconfig
-        // backend unwrap a NoMatch (fontique <= 0.11.1; fixed on parley main,
-        // unreleased). Probe inside catch_unwind and fall back to the bundled
-        // font only, so a font-less container still renders. The hook swap
-        // keeps the probe's panic trace out of host logs; the init runs once
-        // and every render path funnels through this OnceLock, so the window
-        // where an unrelated thread's panic would go unreported is negligible.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let probed = std::panic::catch_unwind(|| {
-            Collection::new(CollectionOptions {
-                shared: false,
-                system_fonts: true,
-                ..Default::default()
-            })
-        });
-        std::panic::set_hook(prev_hook);
-        let mut collection = probed.unwrap_or_else(|_| {
-            eprintln!(
-                "blitz-py: system font enumeration failed (fontconfig installed but no \
-                 fonts?); continuing with bundled fonts only"
-            );
-            Collection::new(CollectionOptions {
-                shared: false,
-                system_fonts: false,
-                ..Default::default()
-            })
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
         });
         // Register under the explicit name "Inter" (the file's own family
         // name is "Inter Variable") and wire the defaults by returned id —
@@ -291,8 +323,7 @@ fn register_fonts(
             .map_err(|_| PyValueError::new_err("font collection lock poisoned"))?;
         let mut names = Vec::new();
         for font in fonts {
-            let registered =
-                base.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
+            let registered = base.register_fonts(parley::fontique::Blob::new(Arc::new(font)), None);
             for (id, _) in registered {
                 if let Some(name) = base.family_name(id) {
                     names.push(name.to_string());
@@ -413,7 +444,16 @@ fn ellipsize(
     let fonts = fonts.unwrap_or_default();
     py.detach(move || {
         let width = |s: &str| {
-            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+            text_layout(
+                s,
+                &family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                None,
+                &fonts,
+            )
+            .width()
         };
         if width(&text) <= max_width {
             return Ok(text);
@@ -480,8 +520,12 @@ fn line_clamp(
         let (mut lo, mut hi) = (0usize, chars.len());
         while lo < hi {
             let mid = (lo + hi).div_ceil(2);
-            let candidate: String =
-                chars[..mid].iter().collect::<String>().trim_end().to_string() + &ellipsis;
+            let candidate: String = chars[..mid]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+                + &ellipsis;
             if line_count(&candidate) <= max_lines {
                 lo = mid;
             } else {
@@ -580,7 +624,16 @@ fn wrap_balanced(
             return Ok(vec![]);
         }
         let measure = |s: &str| {
-            text_layout(s, &family, font_size, font_weight, letter_spacing, None, &fonts).width()
+            text_layout(
+                s,
+                &family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                None,
+                &fonts,
+            )
+            .width()
         };
         // Greedy break at a given width; None if any single word overflows.
         let greedy = |limit: f32| -> Option<Vec<String>> {
@@ -628,18 +681,61 @@ fn wrap_balanced(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Base URL for documents rendered without `base_url`. The engine's own
+/// default (a `data:` URL) cannot anchor relative URLs, and blitz-dom panics
+/// resolving e.g. `<img src="logo.png">` against it. A hierarchical base lets
+/// them resolve; SyncProvider never fetches this scheme.
+const DEFAULT_BASE_URL: &str = "blitz-py:///";
+
+/// The document base URL: `base_url` if given (it must be able to anchor
+/// relative URLs, for the reason above), else `DEFAULT_BASE_URL`.
+fn document_base_url(base_url: Option<&str>) -> PyResult<Url> {
+    let raw = base_url.unwrap_or(DEFAULT_BASE_URL);
+    match Url::parse(raw) {
+        Ok(url) if !url.cannot_be_a_base() => Ok(url),
+        _ => Err(PyValueError::new_err(format!(
+            "base_url must be an absolute hierarchical URL (e.g. 'file:///assets/'), got '{raw}'"
+        ))),
+    }
+}
+
+/// Per-document resource and font options, shared by every render entry
+/// point (module functions, `Template`, html layers).
+struct DocOptions {
+    base_url: Option<String>,
+    fonts: Vec<Vec<u8>>,
+    default_font_family: Option<String>,
+    allow_file_urls: bool,
+    /// Resource bytes by URL, resolved against the base URL like `src`.
+    resources: std::collections::HashMap<String, Vec<u8>>,
+}
+
 fn build_document(
     html: &str,
     width: u32,
     height: u32,
     scale: f32,
     color_scheme: ColorScheme,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<HtmlDocument> {
+    let DocOptions {
+        base_url,
+        fonts,
+        default_font_family,
+        allow_file_urls,
+        resources,
+    } = opts;
+    let base_url = document_base_url(base_url.as_deref())?;
+    let resources = resources
+        .into_iter()
+        .map(|(key, bytes)| {
+            let mut url = base_url
+                .join(&key)
+                .map_err(|_| PyValueError::new_err(format!("invalid resource URL '{key}'")))?;
+            url.set_fragment(None);
+            Ok((url.to_string(), Bytes::from(bytes)))
+        })
+        .collect::<PyResult<_>>()?;
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
@@ -668,8 +764,11 @@ fn build_document(
     Ok(HtmlDocument::from_html(
         html,
         DocumentConfig {
-            base_url,
-            net_provider: Some(Arc::new(SyncProvider { allow_file_urls })),
+            base_url: Some(base_url.into()),
+            net_provider: Some(Arc::new(SyncProvider {
+                allow_file_urls,
+                resources,
+            })),
             viewport: Some(Viewport::new(
                 physical_width,
                 physical_height,
@@ -718,7 +817,6 @@ fn paint_frame(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_impl(
     html: &str,
     width: u32,
@@ -726,25 +824,12 @@ fn render_impl(
     scale: f32,
     color_scheme: ColorScheme,
     background: Option<blitz_dom::util::Color>,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<RenderResult> {
     // With height=None, lay out against a provisional viewport, then size the
     // canvas to the content.
     let provisional_height = height.unwrap_or(800);
-    let mut document = build_document(
-        html,
-        width,
-        provisional_height,
-        scale,
-        color_scheme,
-        base_url,
-        fonts,
-        default_font_family,
-        allow_file_urls,
-    )?;
+    let mut document = build_document(html, width, provisional_height, scale, color_scheme, opts)?;
     let physical_width = (width as f64 * scale as f64) as u32;
 
     // First resolve dispatches resource loads (delivered synchronously by
@@ -765,18 +850,21 @@ fn render_impl(
             let ph = ph as u32;
             // Re-lay out with the real viewport so vh units and % heights
             // resolve against the final canvas.
-            document.as_mut().set_viewport(Viewport::new(
-                physical_width,
-                ph,
-                scale,
-                color_scheme,
-            ));
+            document
+                .as_mut()
+                .set_viewport(Viewport::new(physical_width, ph, scale, color_scheme));
             document.as_mut().resolve(0.0);
             ph
         }
     };
 
-    let rgba = paint_frame(&mut document, scale, physical_width, physical_height, background);
+    let rgba = paint_frame(
+        &mut document,
+        scale,
+        physical_width,
+        physical_height,
+        background,
+    );
 
     Ok(RenderResult {
         rgba,
@@ -796,22 +884,9 @@ fn render_frames_impl(
     scale: f32,
     color_scheme: ColorScheme,
     background: Option<blitz_dom::util::Color>,
-    base_url: Option<String>,
-    fonts: Vec<Vec<u8>>,
-    default_font_family: Option<String>,
-    allow_file_urls: bool,
+    opts: DocOptions,
 ) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
-    let mut document = build_document(
-        html,
-        width,
-        height,
-        scale,
-        color_scheme,
-        base_url,
-        fonts,
-        default_font_family,
-        allow_file_urls,
-    )?;
+    let mut document = build_document(html, width, height, scale, color_scheme, opts)?;
     let physical_width = (width as f64 * scale as f64) as u32;
     let physical_height = (height as f64 * scale as f64) as u32;
 
@@ -865,7 +940,7 @@ fn validate_quality(quality: u8) -> PyResult<()> {
 fn encode_gif(
     width: u32,
     height: u32,
-    frames: &[Vec<u8>],
+    frames: Vec<Vec<u8>>,
     times: &[f64],
     colors: u16,
 ) -> PyResult<Vec<u8>> {
@@ -887,7 +962,9 @@ fn encode_gif(
     let nq = color_quant::NeuQuant::new(10, (colors as usize).min(255), &samples);
     let mut palette_rgb: Vec<u8> = nq
         .color_map_rgba()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|c| [c[0], c[1], c[2]])
         .collect();
     // Reserve one extra palette slot as the inter-frame "unchanged" marker:
@@ -898,12 +975,17 @@ fn encode_gif(
     palette_rgb.extend_from_slice(&[0, 0, 0]);
 
     // Index frames through a color cache (UI renders have few unique colors).
+    // Consuming `frames` frees each RGBA buffer once its indexed copy exists,
+    // so peak memory stays near the RGBA total rather than RGBA + indexed.
+    let nframes = frames.len();
     let mut cache: HashMap<[u8; 3], u8> = HashMap::new();
     let indexed: Vec<Vec<u8>> = frames
-        .iter()
+        .into_iter()
         .map(|frame| {
             frame
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|px| {
                     let key = [px[0], px[1], px[2]];
                     *cache
@@ -916,7 +998,7 @@ fn encode_gif(
 
     // Delays in centiseconds from time deltas (loop-closing last delay).
     let delay_cs = |dt: f64| ((dt * 100.0).round() as i64).clamp(2, u16::MAX as i64) as u16;
-    let delays: Vec<u16> = (0..frames.len())
+    let delays: Vec<u16> = (0..nframes)
         .map(|i| {
             if times.len() < 2 {
                 10
@@ -1001,28 +1083,73 @@ fn encode_gif(
     Ok(out)
 }
 
-fn validate_gif_args(times: &[f64], colors: u16) -> PyResult<()> {
+fn validate_gif_args(times: &[f64], frame_pixels: u64, colors: u16) -> PyResult<()> {
     if !(2..=256).contains(&colors) {
         return Err(PyValueError::new_err("colors must be in 2..=256"));
     }
-    validate_times(times)
+    validate_times(times, frame_pixels)
 }
 
-/// Run `f` on a thread with a large explicit stack. Style and layout
-/// traversals recurse per DOM-nesting level; Windows threads default to
-/// ~1MB of stack (vs 8MB on Linux/macOS), which deeply nested documents
-/// overflow — crashing the whole process. 64MB is reserved lazily, so the
-/// cost is only the ~tens of µs thread spawn.
-fn with_render_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("blitz-py-render".into())
-            .stack_size(64 << 20)
-            .spawn_scoped(scope, f)
-            .expect("failed to spawn render thread")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })
+/// Stack size of render threads. Style and layout traversals recurse per
+/// DOM-nesting level; Windows threads default to ~1MB of stack (vs 8MB on
+/// Linux/macOS), which deeply nested documents overflow — crashing the whole
+/// process. 64MB is reserved lazily, so it costs address space, not memory.
+const RENDER_STACK_BYTES: usize = 64 << 20;
+
+type RenderJob = Box<dyn FnOnce() + Send>;
+
+/// Idle render workers, each blocked on its own job channel.
+static IDLE_RENDER_WORKERS: Mutex<Vec<std::sync::mpsc::Sender<RenderJob>>> = Mutex::new(Vec::new());
+
+fn spawn_render_worker() -> std::sync::mpsc::Sender<RenderJob> {
+    let (tx, rx) = std::sync::mpsc::channel::<RenderJob>();
+    std::thread::Builder::new()
+        .name("blitz-py-render".into())
+        .stack_size(RENDER_STACK_BYTES)
+        .spawn(move || {
+            while let Ok(job) = rx.recv() {
+                job();
+            }
+        })
+        .expect("failed to spawn render thread");
+    tx
+}
+
+/// Run `f` on a pooled render thread with a large stack (see
+/// `RENDER_STACK_BYTES`) and return its result, re-raising its panic.
+///
+/// Threads are reused rather than spawned per call: Stylo deliberately leaks
+/// a per-thread bloom filter and style-sharing cache (`Box::leak` into TLS),
+/// so every fresh thread that styles a document costs ~16-37KB for the life
+/// of the process (geekmagic-hacs#209). A caller takes an idle worker or
+/// starts a new one when all are busy, so the pool grows to the peak number
+/// of concurrent renders and no further.
+fn with_render_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let mut job: RenderJob = Box::new(move || {
+        // Catch here so a panicking render neither kills the worker nor
+        // loses the payload; it is resumed on the calling thread below.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let _ = result_tx.send(result);
+    });
+    let idle_workers = || {
+        IDLE_RENDER_WORKERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    let mut worker = idle_workers().pop();
+    let worker = loop {
+        let candidate = worker.take().unwrap_or_else(spawn_render_worker);
+        match candidate.send(job) {
+            Ok(()) => break candidate,
+            // Worker thread gone (cannot happen while jobs catch panics,
+            // but cheap to survive): retry on a fresh one.
+            Err(std::sync::mpsc::SendError(returned)) => job = returned,
+        }
+    };
+    let result = result_rx.recv().expect("render worker exited mid-job");
+    idle_workers().push(worker);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 fn encode_png(result: &RenderResult) -> Vec<u8> {
@@ -1030,6 +1157,11 @@ fn encode_png(result: &RenderResult) -> Vec<u8> {
     let mut encoder = png::Encoder::new(&mut out, result.width, result.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // png 0.18 defaults to Balanced deflate with adaptive row filtering,
+    // 4-8x slower to encode than png 0.17's defaults (fdeflate, fixed Sub
+    // filter). Restore those: encode stays cheap next to rendering.
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::Filter::Sub);
     let mut writer = encoder.write_header().expect("failed to write PNG header");
     writer
         .write_image_data(&result.rgba)
@@ -1042,7 +1174,7 @@ fn encode_png(result: &RenderResult) -> Vec<u8> {
 ///
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_png<'py>(
     py: Python<'py>,
@@ -1056,6 +1188,7 @@ fn render_png<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
@@ -1063,21 +1196,24 @@ fn render_png<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
-        let result = render_impl(
-            &html,
-            width,
-            height,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )?;
-        Ok(encode_png(&result))
+    let result = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
+            let result = render_impl(
+                &html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                    resources: resources.unwrap_or_default(),
+                },
+            )?;
+            Ok(encode_png(&result))
         })
     })?;
     Ok(PyBytes::new(py, &result))
@@ -1089,7 +1225,7 @@ fn render_png<'py>(
 /// bytes of RGBA data — ready for `PIL.Image.frombytes("RGBA", (w, h), data)`.
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_rgba<'py>(
     py: Python<'py>,
@@ -1103,6 +1239,7 @@ fn render_rgba<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<(u32, u32, Bound<'py, PyBytes>)> {
@@ -1110,27 +1247,26 @@ fn render_rgba<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| {
-        with_render_stack(|| {
-        render_impl(
-            &html,
-            width,
-            height,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )
+    let result = py.detach(move || {
+        with_render_stack(move || {
+            render_impl(
+                &html,
+                width,
+                height,
+                scale,
+                color_scheme,
+                background,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                    resources: resources.unwrap_or_default(),
+                },
+            )
         })
     })?;
-    Ok((
-        result.width,
-        result.height,
-        PyBytes::new(py, &result.rgba),
-    ))
+    Ok((result.width, result.height, PyBytes::new(py, &result.rgba)))
 }
 
 /// Render an HTML string at multiple animation timestamps.
@@ -1149,7 +1285,7 @@ fn render_rgba<'py>(
 ///              duration=50, loop=0)
 /// ```
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height, times, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height, times, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_frames<'py>(
     py: Python<'py>,
@@ -1164,32 +1300,36 @@ fn render_frames<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
-    validate(width, Some(height), scale)?;
+    let frame_pixels = validate(width, Some(height), scale)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    validate_times(&times)?;
-    let (w, h, frames) = py.detach(|| {
-        with_render_stack(|| {
-        render_frames_impl(
-            &html,
-            width,
-            height,
-            &times,
-            scale,
-            color_scheme,
-            background,
-            base_url,
-            fonts.unwrap_or_default(),
-            default_font_family,
-            allow_file_urls,
-        )
+    validate_times(&times, frame_pixels)?;
+    let (w, h, frames) = py.detach(move || {
+        with_render_stack(move || {
+            render_frames_impl(
+                &html,
+                width,
+                height,
+                &times,
+                scale,
+                color_scheme,
+                background,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                    resources: resources.unwrap_or_default(),
+                },
+            )
         })
     })?;
-    let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+    let frames = frames.into_iter().map(|f| PyBytes::new(py, &f)).collect();
     Ok((w, h, frames))
 }
 
@@ -1198,7 +1338,7 @@ fn render_frames<'py>(
 /// JPEG has no alpha channel — use an opaque `background` (the default).
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, quality=90, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, quality=90, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_jpeg<'py>(
     py: Python<'py>,
@@ -1213,6 +1353,7 @@ fn render_jpeg<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
@@ -1221,8 +1362,8 @@ fn render_jpeg<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
+    let result = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
             let result = render_impl(
                 &html,
                 width,
@@ -1230,10 +1371,13 @@ fn render_jpeg<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                    resources: resources.unwrap_or_default(),
+                },
             )?;
             encode_jpeg(&result, quality)
         })
@@ -1246,7 +1390,7 @@ fn render_jpeg<'py>(
 /// Frame delays follow the spacing of `times`. One shared `colors`-entry
 /// palette, no dithering, delta-encoded frames — tuned for UI-style content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height, times, colors=64, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height, times, colors=64, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_gif<'py>(
     py: Python<'py>,
@@ -1262,16 +1406,17 @@ fn render_gif<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    validate(width, Some(height), scale)?;
-    validate_gif_args(&times, colors)?;
+    let frame_pixels = validate(width, Some(height), scale)?;
+    validate_gif_args(&times, frame_pixels, colors)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let gif = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
+    let gif = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
             let (w, h, frames) = render_frames_impl(
                 &html,
                 width,
@@ -1280,12 +1425,15 @@ fn render_gif<'py>(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts.unwrap_or_default(),
-                default_font_family,
-                allow_file_urls,
+                DocOptions {
+                    base_url,
+                    fonts: fonts.unwrap_or_default(),
+                    default_font_family,
+                    allow_file_urls,
+                    resources: resources.unwrap_or_default(),
+                },
             )?;
-            encode_gif(w, h, &frames, &times, colors)
+            encode_gif(w, h, frames, &times, colors)
         })
     })?;
     Ok(PyBytes::new(py, &gif))
@@ -1335,15 +1483,18 @@ fn measure_text(
             parley::style::FontFamily::Source(std::borrow::Cow::Borrowed(family.as_str())),
         ));
         builder.push_default(parley::StyleProperty::FontSize(font_size));
-        builder.push_default(parley::StyleProperty::FontWeight(
-            parley::FontWeight::new(font_weight),
-        ));
+        builder.push_default(parley::StyleProperty::FontWeight(parley::FontWeight::new(
+            font_weight,
+        )));
         builder.push_default(parley::StyleProperty::LetterSpacing(letter_spacing));
         let mut layout = builder.build(&text);
         layout.break_all_lines(max_width);
         Ok((layout.width() as f64, layout.height() as f64))
     })
 }
+
+/// A laid-out element rect `(x, y, width, height)` in CSS pixels.
+type CssRect = (f64, f64, f64, f64);
 
 enum TemplateCmd {
     SetText {
@@ -1382,10 +1533,10 @@ enum TemplateCmd {
     },
     GetBox {
         id: String,
-        reply: std::sync::mpsc::Sender<Result<(f64, f64, f64, f64), String>>,
+        reply: std::sync::mpsc::Sender<Result<CssRect, String>>,
     },
     Boxes {
-        reply: std::sync::mpsc::Sender<Vec<(String, (f64, f64, f64, f64))>>,
+        reply: std::sync::mpsc::Sender<Vec<(String, CssRect)>>,
     },
 }
 
@@ -1397,7 +1548,9 @@ fn build_id_map(
     let mut map = std::collections::HashMap::new();
     let mut stack = vec![doc.root_element().id];
     while let Some(node_id) = stack.pop() {
-        let Some(node) = doc.get_node(node_id) else { continue };
+        let Some(node) = doc.get_node(node_id) else {
+            continue;
+        };
         if let Some(el) = node.element_data() {
             if let Some(id_attr) = el.attr(blitz_dom::local_name!("id")) {
                 let text_child = match node.children.as_slice() {
@@ -1460,7 +1613,7 @@ impl TemplateWorker {
     }
 
     /// Absolute laid-out rect of a node in CSS pixels (post-resolve).
-    fn abs_box(&self, node_id: blitz_dom::NodeId) -> (f64, f64, f64, f64) {
+    fn abs_box(&self, node_id: blitz_dom::NodeId) -> CssRect {
         let doc = self.document.as_ref();
         let Some(node) = doc.get_node(node_id) else {
             return (0.0, 0.0, 0.0, 0.0);
@@ -1475,7 +1628,9 @@ impl TemplateWorker {
         );
         let mut current = node.parent;
         while let Some(parent_id) = current {
-            let Some(parent) = doc.get_node(parent_id) else { break };
+            let Some(parent) = doc.get_node(parent_id) else {
+                break;
+            };
             x += parent.final_layout().location.x as f64;
             y += parent.final_layout().location.y as f64;
             current = parent.parent;
@@ -1497,7 +1652,12 @@ impl TemplateWorker {
                     });
                     let _ = reply.send(result);
                 }
-                TemplateCmd::SetStyle { id, name, value, reply } => {
+                TemplateCmd::SetStyle {
+                    id,
+                    name,
+                    value,
+                    reply,
+                } => {
                     // Rewrite the `style` attribute rather than using
                     // `set_style_property`: property mutation missed layout
                     // invalidation in blitz 0.3.0-beta.1 (fixed on main,
@@ -1523,7 +1683,12 @@ impl TemplateWorker {
                     });
                     let _ = reply.send(result);
                 }
-                TemplateCmd::SetAttr { id, name, value, reply } => {
+                TemplateCmd::SetAttr {
+                    id,
+                    name,
+                    value,
+                    reply,
+                } => {
                     let result = self.lookup(&id).map(|(node_id, _)| {
                         let qual =
                             blitz_dom::QualName::new(None, blitz_dom::ns!(), name.as_str().into());
@@ -1637,6 +1802,8 @@ impl TemplateWorker {
 #[pyclass]
 struct Template {
     tx: Mutex<std::sync::mpsc::Sender<TemplateCmd>>,
+    /// Physical pixels per rendered frame, for the animation budget.
+    frame_pixels: u64,
 }
 
 impl Template {
@@ -1662,7 +1829,10 @@ impl Template {
 
     fn render(&self, py: Python<'_>, time: f64) -> PyResult<RenderResult> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::Render { time, reply: reply_tx })?;
+        self.send(TemplateCmd::Render {
+            time,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))
     }
@@ -1673,19 +1843,30 @@ impl Template {
         times: Vec<f64>,
     ) -> PyResult<(u32, u32, Vec<Vec<u8>>)> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::RenderFrames { times, reply: reply_tx })?;
+        self.send(TemplateCmd::RenderFrames {
+            times,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))
     }
 }
 
-fn validate_times(times: &[f64]) -> PyResult<()> {
+fn validate_times(times: &[f64], frame_pixels: u64) -> PyResult<()> {
     if times.is_empty() {
         return Err(PyValueError::new_err("times must not be empty"));
     }
     if times.len() > MAX_FRAMES {
         return Err(PyValueError::new_err(format!(
             "at most {MAX_FRAMES} frames per call (got {})",
+            times.len()
+        )));
+    }
+    let total = frame_pixels * times.len() as u64;
+    if total > MAX_ANIMATION_PIXELS {
+        return Err(PyValueError::new_err(format!(
+            "{} frames of {frame_pixels} pixels exceed the {MAX_ANIMATION_PIXELS}-pixel \
+             per-call animation budget; render fewer or smaller frames per call",
             times.len()
         )));
     }
@@ -1700,7 +1881,7 @@ fn validate_times(times: &[f64]) -> PyResult<()> {
 #[pymethods]
 impl Template {
     #[new]
-    #[pyo3(signature = (html, *, width, height, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+    #[pyo3(signature = (html, *, width, height, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -1714,14 +1895,21 @@ impl Template {
         fonts: Option<Vec<Vec<u8>>>,
         default_font_family: Option<String>,
         allow_file_urls: bool,
+        resources: Option<std::collections::HashMap<String, Vec<u8>>>,
         css: Option<&str>,
         css_vars: Option<std::collections::HashMap<String, String>>,
     ) -> PyResult<Self> {
-        validate(width, Some(height), scale)?;
+        let frame_pixels = validate(width, Some(height), scale)?;
         let color_scheme = parse_color_scheme(color_scheme)?;
         let background = parse_background(background)?;
         let html = compose_html(html, css, css_vars)?;
-        let fonts = fonts.unwrap_or_default();
+        let opts = DocOptions {
+            base_url,
+            fonts: fonts.unwrap_or_default(),
+            default_font_family,
+            allow_file_urls,
+            resources: resources.unwrap_or_default(),
+        };
 
         let (tx, rx) = std::sync::mpsc::channel::<TemplateCmd>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -1730,17 +1918,7 @@ impl Template {
             .name("blitz-py-template".into())
             .stack_size(64 << 20)
             .spawn(move || {
-                let built = build_document(
-                    &html,
-                    width,
-                    height,
-                    scale,
-                    color_scheme,
-                    base_url,
-                    fonts,
-                    default_font_family,
-                    allow_file_urls,
-                );
+                let built = build_document(&html, width, height, scale, color_scheme, opts);
                 match built {
                     Ok(mut document) => {
                         document.as_mut().resolve(0.0);
@@ -1767,7 +1945,10 @@ impl Template {
         py.detach(move || init_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker died during construction"))?
             .map_err(PyValueError::new_err)?;
-        Ok(Template { tx: Mutex::new(tx) })
+        Ok(Template {
+            tx: Mutex::new(tx),
+            frame_pixels,
+        })
     }
 
     /// Replace the text content of the element with the given `id`.
@@ -1785,7 +1966,12 @@ impl Template {
             )));
         }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
-        self.mutate(py, |reply| TemplateCmd::SetStyle { id, name, value, reply })
+        self.mutate(py, |reply| TemplateCmd::SetStyle {
+            id,
+            name,
+            value,
+            reply,
+        })
     }
 
     /// Set an attribute on the element with the given `id`.
@@ -1798,7 +1984,12 @@ impl Template {
             ));
         }
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
-        self.mutate(py, |reply| TemplateCmd::SetAttr { id, name, value, reply })
+        self.mutate(py, |reply| TemplateCmd::SetAttr {
+            id,
+            name,
+            value,
+            reply,
+        })
     }
 
     /// Replace the children of the element with the given `id` by parsing an
@@ -1812,7 +2003,11 @@ impl Template {
     /// of the elements with ids `temp` and `hum` in one round-trip.
     /// Validates every id before applying — a failing batch changes nothing.
     #[pyo3(signature = (**kwargs))]
-    fn update(&self, py: Python<'_>, kwargs: Option<Bound<'_, pyo3::types::PyDict>>) -> PyResult<()> {
+    fn update(
+        &self,
+        py: Python<'_>,
+        kwargs: Option<Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<()> {
         let Some(kwargs) = kwargs else { return Ok(()) };
         let mut updates = Vec::with_capacity(kwargs.len());
         for (k, v) in kwargs.iter() {
@@ -1832,9 +2027,9 @@ impl Template {
         py: Python<'py>,
         times: Vec<f64>,
     ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
-        validate_times(&times)?;
+        validate_times(&times, self.frame_pixels)?;
         let (w, h, frames) = self.request_frames(py, times)?;
-        let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+        let frames = frames.into_iter().map(|f| PyBytes::new(py, &f)).collect();
         Ok((w, h, frames))
     }
 
@@ -1846,9 +2041,9 @@ impl Template {
         times: Vec<f64>,
         colors: u16,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        validate_gif_args(&times, colors)?;
+        validate_gif_args(&times, self.frame_pixels, colors)?;
         let (w, h, frames) = self.request_frames(py, times.clone())?;
-        let gif = py.detach(|| encode_gif(w, h, &frames, &times, colors))?;
+        let gif = py.detach(|| encode_gif(w, h, frames, &times, colors))?;
         Ok(PyBytes::new(py, &gif))
     }
 
@@ -1868,10 +2063,13 @@ impl Template {
 
     /// Final laid-out rect of the element with this `id`, as
     /// `(x, y, width, height)` in CSS pixels.
-    fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<(f64, f64, f64, f64)> {
+    fn get_box(&self, py: Python<'_>, id: &str) -> PyResult<CssRect> {
         let id = id.to_string();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        self.send(TemplateCmd::GetBox { id, reply: reply_tx })?;
+        self.send(TemplateCmd::GetBox {
+            id,
+            reply: reply_tx,
+        })?;
         py.detach(move || reply_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker has shut down"))?
             .map_err(PyValueError::new_err)
@@ -1879,10 +2077,7 @@ impl Template {
 
     /// Laid-out rects of every element with an `id`, as
     /// `{id: (x, y, width, height)}` in CSS pixels.
-    fn boxes(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<std::collections::HashMap<String, (f64, f64, f64, f64)>> {
+    fn boxes(&self, py: Python<'_>) -> PyResult<std::collections::HashMap<String, CssRect>> {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.send(TemplateCmd::Boxes { reply: reply_tx })?;
         let boxes = py
@@ -1922,10 +2117,7 @@ enum LayerJob {
         scale: f32,
         color_scheme: ColorScheme,
         background: Option<blitz_dom::util::Color>,
-        base_url: Option<String>,
-        fonts: Vec<Vec<u8>>,
-        default_font_family: Option<String>,
-        allow_file_urls: bool,
+        opts: DocOptions,
         time: f64,
     },
     Tpl {
@@ -2001,9 +2193,9 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                     .ok_or_else(|| PyValueError::new_err("html layer requires 'height'"))?;
                 let scale: f32 = dict_get(dict, "scale")?.unwrap_or(1.0);
                 validate(width, Some(height), scale)?;
-                let color_scheme =
-                    parse_color_scheme(&dict_get::<String>(dict, "color_scheme")?
-                        .unwrap_or_else(|| "light".into()))?;
+                let color_scheme = parse_color_scheme(
+                    &dict_get::<String>(dict, "color_scheme")?.unwrap_or_else(|| "light".into()),
+                )?;
                 // Layers default to a transparent background so they stack.
                 let background =
                     parse_background(dict_get::<String>(dict, "background")?.as_deref())?;
@@ -2018,10 +2210,13 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                     scale,
                     color_scheme,
                     background,
-                    base_url: dict_get(dict, "base_url")?,
-                    fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
-                    default_font_family: dict_get(dict, "default_font_family")?,
-                    allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                    opts: DocOptions {
+                        base_url: dict_get(dict, "base_url")?,
+                        fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
+                        default_font_family: dict_get(dict, "default_font_family")?,
+                        allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                        resources: dict_get(dict, "resources")?.unwrap_or_default(),
+                    },
                     time,
                 }
             }
@@ -2036,7 +2231,14 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                 ));
             }
         };
-        specs.push(LayerSpec { job, x, y, opacity, blur, tint });
+        specs.push(LayerSpec {
+            job,
+            x,
+            y,
+            opacity,
+            blur,
+            tint,
+        });
     }
     Ok(specs)
 }
@@ -2076,9 +2278,7 @@ fn box_blur(buf: &mut [u8], w: usize, h: usize, radius: f32) {
         // Vertical pass tmp -> buf
         for x in 0..w {
             let mut sums = [0u32; 4];
-            let window = |y: isize| -> usize {
-                (y.clamp(0, h as isize - 1) as usize * w + x) * 4
-            };
+            let window = |y: isize| -> usize { (y.clamp(0, h as isize - 1) as usize * w + x) * 4 };
             for y in -(r as isize)..=(r as isize) {
                 let p = window(y);
                 for c in 0..4 {
@@ -2112,7 +2312,7 @@ fn run_layers(
     let (br, bg_, bb, ba) = background;
     let a = ba as u32;
     let mut canvas = vec![0u8; cw * ch * 4];
-    for px in canvas.chunks_exact_mut(4) {
+    for px in canvas.as_chunks_mut::<4>().0 {
         px[0] = ((br as u32 * a) / 255) as u8;
         px[1] = ((bg_ as u32 * a) / 255) as u8;
         px[2] = ((bb as u32 * a) / 255) as u8;
@@ -2128,10 +2328,7 @@ fn run_layers(
                 scale,
                 color_scheme,
                 background,
-                base_url,
-                fonts,
-                default_font_family,
-                allow_file_urls,
+                opts,
                 time,
             } => {
                 let (w, h, mut frames) = render_frames_impl(
@@ -2142,17 +2339,21 @@ fn run_layers(
                     scale,
                     color_scheme,
                     background,
-                    base_url,
-                    fonts,
-                    default_font_family,
-                    allow_file_urls,
+                    opts,
                 )?;
-                RenderResult { rgba: frames.remove(0), width: w, height: h }
+                RenderResult {
+                    rgba: frames.remove(0),
+                    width: w,
+                    height: h,
+                }
             }
             LayerJob::Tpl { sender, time } => {
                 let (reply_tx, reply_rx) = std::sync::mpsc::channel();
                 sender
-                    .send(TemplateCmd::Render { time, reply: reply_tx })
+                    .send(TemplateCmd::Render {
+                        time,
+                        reply: reply_tx,
+                    })
                     .map_err(|_| PyValueError::new_err("template worker has shut down"))?;
                 reply_rx
                     .recv()
@@ -2167,7 +2368,7 @@ fn run_layers(
         }
         if let Some((tr, tg, tb)) = spec.tint {
             // Recolor keeping coverage: rgb := tint * alpha (premultiplied).
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 let a = px[3] as u32;
                 px[0] = ((tr as u32 * a) / 255) as u8;
                 px[1] = ((tg as u32 * a) / 255) as u8;
@@ -2176,10 +2377,8 @@ fn run_layers(
         }
         if spec.opacity < 1.0 {
             let f = (spec.opacity * 255.0) as u32;
-            for px in rgba.chunks_exact_mut(4) {
-                for c in 0..4 {
-                    px[c] = ((px[c] as u32 * f) / 255) as u8;
-                }
+            for v in rgba.iter_mut() {
+                *v = ((*v as u32 * f) / 255) as u8;
             }
         }
 
@@ -2202,13 +2401,16 @@ fn run_layers(
                 }
                 let inv = 255 - sa;
                 for c in 0..4 {
-                    canvas[d + c] =
-                        (rgba[s + c] as u32 + (canvas[d + c] as u32 * inv) / 255) as u8;
+                    canvas[d + c] = (rgba[s + c] as u32 + (canvas[d + c] as u32 * inv) / 255) as u8;
                 }
             }
         }
     }
-    Ok(RenderResult { rgba: canvas, width, height })
+    Ok(RenderResult {
+        rgba: canvas,
+        width,
+        height,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2222,7 +2424,7 @@ fn layers_common(
     validate(width, Some(height), 1.0)?;
     let background = parse_hex_rgba(background)?;
     let specs = parse_layers(&layers)?;
-    py.detach(|| with_render_stack(|| run_layers(specs, width, height, background)))
+    py.detach(move || with_render_stack(move || run_layers(specs, width, height, background)))
 }
 
 /// Composite several documents and/or templates into one surface.
@@ -2297,4 +2499,58 @@ fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_layers_jpeg, m)?)?;
     m.add_class::<Template>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idle_workers() -> usize {
+        IDLE_RENDER_WORKERS.lock().unwrap().len()
+    }
+
+    #[test]
+    fn render_pool_reuses_and_survives_panics() {
+        // One test so the global pool's size is not perturbed by others.
+        assert_eq!(with_render_stack(|| 41 + 1), 42);
+        let thread_of = || with_render_stack(|| std::thread::current().id());
+        let first = thread_of();
+        assert_eq!(thread_of(), first, "idle worker is reused");
+        assert_eq!(idle_workers(), 1);
+
+        let panicked = std::panic::catch_unwind(|| with_render_stack(|| panic!("boom")));
+        let payload = panicked.expect_err("panic reaches the caller");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"boom"));
+        assert_eq!(thread_of(), first, "worker survives the panic");
+        assert_eq!(idle_workers(), 1);
+
+        // Deep recursion that would overflow a default 2MB/1MB stack.
+        fn depth(n: u32) -> u32 {
+            let pad = std::hint::black_box([0u8; 1024]);
+            if n == 0 {
+                pad[0] as u32
+            } else {
+                depth(n - 1) + pad[1] as u32
+            }
+        }
+        assert_eq!(with_render_stack(|| depth(20_000)), 0);
+
+        // Concurrent callers each get a worker; the pool grows to the peak.
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    with_render_stack(move || {
+                        barrier.wait(); // deadlocks unless 4 workers run at once
+                        std::thread::current().id()
+                    })
+                })
+            })
+            .collect();
+        let ids: std::collections::HashSet<_> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(ids.len(), 4);
+        assert_eq!(idle_workers(), 4);
+    }
 }

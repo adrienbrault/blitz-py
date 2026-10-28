@@ -1,6 +1,10 @@
 //! Memory-leak isolation harness. Run stages with:
 //!   cargo run --release --example leak -- <stage>
-//! Stages: fontctx | fontctx_reg | doc | paint | full
+//! Stages: fontctx | fontctx_reg | doc | paint | full, plus per-thread
+//! variants that run each iteration on a fresh thread (fonts cloned from one
+//! shared collection, so the FontContext::new() leak doesn't confound):
+//! thread_noop | thread_parse | thread_doc | thread_full | doc_shared |
+//! full_shared
 
 use std::process::Command;
 use std::sync::Arc;
@@ -12,7 +16,8 @@ use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
 
-const HTML: &str = "<body style='background:#123'><div style='width:100px;height:100px;background:#f00'></div>";
+const HTML: &str =
+    "<body style='background:#123'><div style='width:100px;height:100px;background:#f00'></div>";
 const W: u32 = 480;
 const H: u32 = 480;
 
@@ -21,7 +26,11 @@ fn rss_mb() -> f64 {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
         .unwrap();
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap() / 1024.0
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .unwrap()
+        / 1024.0
 }
 
 fn font_ctx(register: bool) -> parley::FontContext {
@@ -53,9 +62,35 @@ fn paint(doc: &mut HtmlDocument) -> Vec<u8> {
     )
 }
 
+/// A document whose font context clones a shared collection instead of
+/// scanning platform fonts (which leaks on its own; see `fontctx`).
+fn make_doc_shared(base: &parley::fontique::Collection) -> HtmlDocument {
+    HtmlDocument::from_html(
+        HTML,
+        DocumentConfig {
+            viewport: Some(Viewport::new(W, H, 1.0, ColorScheme::Light)),
+            font_ctx: Some(parley::FontContext {
+                collection: base.clone(),
+                source_cache: Default::default(),
+            }),
+            ..Default::default()
+        },
+    )
+}
+
+fn doc_shared(base: &parley::fontique::Collection, paint_too: bool) {
+    let mut doc = make_doc_shared(base);
+    doc.as_mut().resolve(0.0);
+    doc.as_mut().resolve(0.0);
+    if paint_too {
+        let _ = paint(&mut doc);
+    }
+}
+
 fn main() {
     let stage = std::env::args().nth(1).unwrap_or_else(|| "full".into());
     let mut reused_doc = make_doc(true);
+    let base = font_ctx(true).collection;
     println!("stage={stage} start rss={:.0}MB", rss_mb());
     for i in 1..=600u32 {
         match stage.as_str() {
@@ -79,6 +114,22 @@ fn main() {
                 doc.as_mut().resolve(0.0);
                 let _ = paint(&mut doc);
             }
+            "doc_shared" => doc_shared(&base, false),
+            "full_shared" => doc_shared(&base, true),
+            "thread_noop" => std::thread::spawn(|| {}).join().unwrap(),
+            "thread_parse" => {
+                let base = base.clone();
+                std::thread::spawn(move || drop(make_doc_shared(&base)))
+                    .join()
+                    .unwrap();
+            }
+            "thread_doc" | "thread_full" => {
+                let base = base.clone();
+                let paint_too = stage == "thread_full";
+                std::thread::spawn(move || doc_shared(&base, paint_too))
+                    .join()
+                    .unwrap();
+            }
             other => panic!("unknown stage {other}"),
         }
         if i % 150 == 0 {
@@ -86,4 +137,3 @@ fn main() {
         }
     }
 }
-

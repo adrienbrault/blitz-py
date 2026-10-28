@@ -307,6 +307,19 @@ class TestTemplate:
             results = list(pool.map(lambda i: tpl.render_png(), range(16)))
         assert all(r == results[0] for r in results)
 
+    def test_concurrent_one_shot_renders(self):
+        # One-shot renders run on a pool of reused render threads; concurrent
+        # callers must each get one (not queue on a single worker) and get
+        # identical output.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def render(i):
+            return blitz_py.render_png(self.HTML, width=100, height=50)
+
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(render, range(32)))
+        assert all(r == results[0] for r in results)
+
 
 class TestJpeg:
     def test_magic_and_size(self):
@@ -521,6 +534,20 @@ class TestFrames:
             blitz_py.render_frames(
                 "<p>x</p>", width=10, height=10, times=[0.0] * 1001
             )
+
+    def test_animation_memory_budget(self):
+        # 5 frames of 64M pixels each is ~1.3GB of RGBA: rejected before
+        # anything renders, for one-shot calls and templates alike.
+        big = dict(width=8000, height=8000)
+        with pytest.raises(ValueError, match="budget"):
+            blitz_py.render_frames("<p>x</p>", times=[0.0] * 5, **big)
+        with pytest.raises(ValueError, match="budget"):
+            blitz_py.render_gif("<p>x</p>", times=[0.0] * 5, **big)
+        tpl = blitz_py.Template("<p>x</p>", **big)
+        with pytest.raises(ValueError, match="budget"):
+            tpl.render_frames(times=[0.0] * 5)
+        with pytest.raises(ValueError, match="budget"):
+            tpl.render_gif(times=[0.0] * 5)
 
 
 class TestErrors:

@@ -27,9 +27,9 @@ Unedited output: a [Tailwind v4 dashboard](examples/tailwind_dashboard.html) (`r
 pip install blitz-py
 ```
 
-Prebuilt wheels (abi3, Python ≥ 3.10): Linux glibc + musl (x86_64, aarch64), macOS (arm64, x86_64), Windows (x64, arm64).
+Prebuilt wheels (abi3, Python ≥ 3.10; CI-tested on 3.10–3.15): Linux glibc + musl (x86_64, aarch64, armv7), macOS (arm64, x86_64), Windows (x64, arm64).
 
-**No 32-bit (armv7l) wheels** — this is an explicit drop, not an oversight: the rendering stack (`anyrender` 0.11) does not compile on 32-bit targets, and Home Assistant itself removed 32-bit support as of 2025.12. Frozen 32-bit installs on Pi 2/3 cannot use this package; we'll revisit if the engine gains 32-bit support.
+32-bit ARM (armv7) wheels are available as of 0.6.0 (e.g. Raspberry Pi OS 32-bit); CI runs the full test suite on them under QEMU. (Home Assistant itself dropped 32-bit support in 2025.12.)
 
 ## Usage
 
@@ -122,7 +122,7 @@ card = blitz_py.render_png(OG_TEMPLATE, width=1200, height=630,
 png = blitz_py.render_png(email_html, width=600)   # height=None → sized to content
 ```
 
-**Visual snapshot tests** — renders are byte-identical across platforms (CI-verified), so hashes are stable:
+**Visual snapshot tests** — renders are byte-identical across platforms (CI-verified), so hashes are stable for a given blitz-py version (engine upgrades can shift pixels; re-record on upgrade):
 
 ```python
 def test_widget_looks_right():
@@ -210,22 +210,33 @@ def ellipsize(text, max_w, **kw):
 | `scale` | `1.0` | Device-pixel ratio; output is `width*scale` × `height*scale` physical pixels. Use `2.0` for supersampled/hi-dpi output. |
 | `color_scheme` | `"light"` | `"light"` or `"dark"` — drives `@media (prefers-color-scheme: ...)` |
 | `background` | `"#ffffff"` | Base canvas color (`#rgb`, `#rrggbb`, `#rrggbbaa`), or `None` for transparent |
-| `base_url` | `None` | Base for resolving relative URLs |
+| `base_url` | `None` | Base for resolving relative URLs (must be hierarchical, e.g. `file:///assets/`) |
 | `css` | `None` | Extra CSS appended after the document's styles (wins the cascade) |
 | `css_vars` | `None` | Dict of CSS custom properties set on `:root`, e.g. `{"accent": "#f00"}` → `var(--accent)` |
 | `fonts` | `None` | List of font file `bytes` (TTF/OTF, variable fonts OK) to register |
 | `default_font_family` | `None` | Family name to use for all CSS generic families (`sans-serif`, `serif`, ...) and as text fallback |
 | `allow_file_urls` | `False` | Permit `file://` URLs for images/resources |
+| `resources` | `None` | Dict of URL → `bytes` served in-memory to `<img>`, `<link rel=stylesheet>`, CSS `url()` and `@font-face` |
 
 ### Images and resources
 
-Rendering is fully offline. Embed images as `data:` URIs, or enable `allow_file_urls=True` and use `file://` paths. `http(s)` URLs are intentionally ignored.
+Rendering is fully offline: `http(s)` URLs are intentionally ignored. Supply assets in memory with `resources=` — no base64, no filesystem access:
 
 ```python
-import base64
-b64 = base64.b64encode(open("icon.png", "rb").read()).decode()
-html = f'<img src="data:image/png;base64,{b64}" style="width:32px">'
+png = blitz_py.render_png(
+    '<link rel="stylesheet" href="site.css"><img src="icons/logo.png">',
+    width=400, height=200,
+    resources={
+        "site.css": css_bytes,          # its url(...) refs resolve relative to it
+        "icons/logo.png": logo_bytes,
+        "fonts/brand.woff2": font_bytes,  # for @font-face src: url(fonts/brand.woff2)
+    },
+)
 ```
+
+Keys resolve against `base_url` exactly like `src`/`href` do, so `"logo.png"` answers `src="logo.png"`, `"./logo.png"` and `"/logo.png"`. Templates and `html` layers accept `resources` too. Alternatively, embed `data:` URIs, or set `allow_file_urls=True` and use `file://` paths (reads are capped at 64MB).
+
+Images whose header declares more than 64M pixels are skipped (rendered as missing) rather than decoded — a few-KB "decompression bomb" PNG can otherwise allocate gigabytes.
 
 ### CSS frameworks (Bootstrap, Tailwind, ...)
 
@@ -248,7 +259,7 @@ blitz_py.render_png(html, width=240, height=240,
                     fonts=[font], default_font_family="My Font")
 ```
 
-`@font-face` also works with `data:` (or `file://`) sources — state the format explicitly, either as the unquoted CSS keyword or a bare extension string:
+`@font-face` also works with `resources=` URLs (e.g. `src: url(fonts/brand.woff2)`, where the file extension identifies the format), `data:` and `file://` sources. For `data:` URIs, stating the format is the safe choice, either as the unquoted CSS keyword or a bare extension string (format-less TTF data URIs also load since 0.6.0):
 
 ```css
 @font-face {
@@ -257,13 +268,21 @@ blitz_py.render_png(html, width=240, height=240,
 }
 ```
 
-WOFF/WOFF2 sources are supported too. `local(...)` sources and format-less data URIs are currently skipped by the engine.
+WOFF/WOFF2 sources are supported too (since 0.6.0; earlier wheels silently fell back to the default font). `local(...)` sources are currently skipped by the engine, and SVG `<text>` does not see document fonts (see [docs/UPSTREAM.md](docs/UPSTREAM.md)).
 
 Note on coverage: bundled Inter covers Latin scripts (plus Greek/Cyrillic). For CJK, Arabic, and other scripts on systems without suitable fonts, pass an appropriate font (e.g. a Noto variant) via `fonts=`.
 
 ### What's supported
 
-Modern CSS as implemented by Stylo/Taffy: flexbox, grid, gradients, border-radius, shadows, transforms, `calc()`, custom properties, media queries, SVG images, WOFF... No JavaScript, no `@font-face` fetching, no external resources. Blitz itself is pre-1.0: capable but not pixel-perfect against browsers.
+Modern CSS as implemented by Stylo/Taffy: flexbox, grid, gradients, border-radius, shadows, transforms, `calc()`, custom properties, media queries, SVG images, WOFF... No JavaScript and no network: resources come from `resources=`, `data:` URIs or opt-in `file://` URLs. CSS floats are not laid out (`float` boxes render as ordinary blocks; the engine's float layout is still opt-in upstream) — use flexbox or grid. Blitz itself is pre-1.0: capable but not pixel-perfect against browsers.
+
+### Limits
+
+Guards against inputs that would exhaust memory; all raise `ValueError` up front unless noted:
+
+- Output: at most 16,384 physical pixels per side and 64M pixels total (256MB of RGBA).
+- Animations (`render_frames`/`render_gif`, module and `Template`): at most 1,000 frames, and at most 256M physical pixels summed over all frames of one call (~1GB of RGBA) — e.g. 120 frames at 1920×1080. Split longer animations across calls.
+- Images whose header declares more than 64M pixels are skipped (rendered as missing), and `file://` reads stop at 64MB.
 
 ## Performance
 

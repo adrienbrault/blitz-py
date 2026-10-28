@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0 — 2026-10-28
+
+### Changed
+- **Engine: Blitz `0.3.0-beta.4` from crates.io** (replaces the git pin on `main` @ `01a6c4b`; 289 commits further). Brings Taffy 0.15, Parley/fontique 0.12, anyrender 0.14 / vello_cpu 0.18. Visible effects: inline SVG with `preserveAspectRatio="none"` now fills its CSS box (chart sparklines span their container), `object-fit` applies to SVG images, CSS animations apply to `<svg>` elements directly, and format-less `data:` TTF `@font-face` sources load.
+- **Line heights are pixel-snapped** (Parley 0.12): `normal` line-height for 16px Inter goes from 19.36 to 20px, so text shifts by ≤1px and `measure_text` heights change accordingly. Golden hashes differ from 0.5.0; renders stay byte-identical across platforms.
+- PyO3 0.30 (Python 3.15 support), png 0.18, refreshed lockfile. CI now tests the abi3 wheel on Python 3.10–3.15 and on Alpine with 3.13/3.14.
+
+### Added
+- **`resources=`**: a dict of URL → `bytes` served in-memory to `<img>`, stylesheets, CSS `url()` and `@font-face` — no base64 in the HTML, no filesystem access. Keys resolve against `base_url` like `src` does (`{"logo.png": data}` answers `src="logo.png"`). Accepted by every render function, `Template` and `html` layers.
+- **WOFF/WOFF2 web fonts** actually load now. The README promised them, but the engine's decoder was compiled out, so they silently fell back to the default face.
+- **armv7 (32-bit ARM) wheels**, glibc and musl — the anyrender build failure that blocked them is fixed upstream.
+
+### Fixed
+- **Native memory leak of ~16KB per render call** ([geekmagic-hacs#209](https://github.com/adrienbrault/geekmagic-hacs/issues/209)): every one-shot `render_*`/`render_layers*` call ran on a freshly spawned 64MB-stack thread, and Stylo deliberately leaks a per-thread bloom filter and style-sharing cache (`Box::leak` into thread-local storage), so each new thread that styles a document costs memory for the life of the process — ~16KB per call with 0.5.0 (~37KB with the 0.6.0 engine before this fix), i.e. ~5–6MB/hour for a display refreshing every 10s, GBs over days on a Raspberry Pi. Renders now run on a pool of reused large-stack threads that grows to the peak number of concurrent callers (so threads rendering in parallel still do), and growth is ~0KB/call. Panics still propagate to the caller, and a panicking render does not take its worker down. `Template` already reused its worker thread and was unaffected — but creating a new `Template` per render still spawns a thread, so keep templates long-lived.
+- **No more `PanicException` on relative URLs without `base_url`** (`<img src="logo.png">`, `<link href="a.css">`, `<iframe src>`, `//host/x`). The engine's default base could not anchor relative URLs and panicked; the panic surfaced as `pyo3_runtime.PanicException`, a `BaseException` that `except Exception` misses. Present since 0.1.0. Documents now default to a hierarchical base; a `base_url` that cannot anchor relative URLs raises `ValueError`.
+- **Image decode bombs**: the engine decodes images in full with no pixel limit, so a few-KB PNG declaring 9000×9000 allocated ~400MB. Images whose header declares more than 64M pixels are now skipped.
+- **Animation memory is bounded per call**: `render_frames`/`render_gif` (module and `Template`) reject calls whose frames total more than 256M physical pixels (~1GB of RGBA); before, only per-frame size and frame count were checked. Peak memory under the budget is also lower (frames are freed as they are encoded or handed to Python).
+- `file://` reads (opt-in) are capped at 64MB, so e.g. `file:///dev/zero` no longer reads forever.
+
+### Removed
+- The fontconfig zero-fonts `catch_unwind` probe: fontique 0.12 fixes the panic upstream. The fontless Alpine CI job stays as the regression test.
+
 ## 0.5.0 — 2026-08-17
 
 ### Changed
