@@ -121,8 +121,14 @@ static DEFAULT_FONT: &[u8] = include_bytes!("../assets/InterVariable.ttf");
 const MAX_DIM: u64 = 16_384;
 /// Largest permitted physical pixel count (256MB of RGBA).
 const MAX_PIXELS: u64 = 64_000_000;
+/// Largest permitted physical pixel count summed over all frames of one
+/// animation call (~1GB of RGBA): frames are held in memory until encoded
+/// or returned, so `MAX_PIXELS` per frame alone does not bound the call.
+const MAX_ANIMATION_PIXELS: u64 = 4 * MAX_PIXELS;
 
-fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<()> {
+/// Validate output dimensions; returns the physical pixel count (per row
+/// when `height` is `None`).
+fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<u64> {
     if width == 0 || height == Some(0) {
         return Err(PyValueError::new_err("width and height must be > 0"));
     }
@@ -141,7 +147,7 @@ fn validate(width: u32, height: Option<u32>, scale: f32) -> PyResult<()> {
             "physical output {pw}x{ph} exceeds {MAX_PIXELS} pixels"
         )));
     }
-    Ok(())
+    Ok(pw * ph)
 }
 
 /// Compose the final HTML: user `css` and `css_vars` are appended in a
@@ -870,7 +876,7 @@ fn validate_quality(quality: u8) -> PyResult<()> {
 fn encode_gif(
     width: u32,
     height: u32,
-    frames: &[Vec<u8>],
+    frames: Vec<Vec<u8>>,
     times: &[f64],
     colors: u16,
 ) -> PyResult<Vec<u8>> {
@@ -903,9 +909,12 @@ fn encode_gif(
     palette_rgb.extend_from_slice(&[0, 0, 0]);
 
     // Index frames through a color cache (UI renders have few unique colors).
+    // Consuming `frames` frees each RGBA buffer once its indexed copy exists,
+    // so peak memory stays near the RGBA total rather than RGBA + indexed.
+    let nframes = frames.len();
     let mut cache: HashMap<[u8; 3], u8> = HashMap::new();
     let indexed: Vec<Vec<u8>> = frames
-        .iter()
+        .into_iter()
         .map(|frame| {
             frame
                 .chunks_exact(4)
@@ -921,7 +930,7 @@ fn encode_gif(
 
     // Delays in centiseconds from time deltas (loop-closing last delay).
     let delay_cs = |dt: f64| ((dt * 100.0).round() as i64).clamp(2, u16::MAX as i64) as u16;
-    let delays: Vec<u16> = (0..frames.len())
+    let delays: Vec<u16> = (0..nframes)
         .map(|i| {
             if times.len() < 2 {
                 10
@@ -1006,11 +1015,11 @@ fn encode_gif(
     Ok(out)
 }
 
-fn validate_gif_args(times: &[f64], colors: u16) -> PyResult<()> {
+fn validate_gif_args(times: &[f64], frame_pixels: u64, colors: u16) -> PyResult<()> {
     if !(2..=256).contains(&colors) {
         return Err(PyValueError::new_err("colors must be in 2..=256"));
     }
-    validate_times(times)
+    validate_times(times, frame_pixels)
 }
 
 /// Run `f` on a thread with a large explicit stack. Style and layout
@@ -1168,11 +1177,11 @@ fn render_frames<'py>(
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
-    validate(width, Some(height), scale)?;
+    let frame_pixels = validate(width, Some(height), scale)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    validate_times(&times)?;
+    validate_times(&times, frame_pixels)?;
     let (w, h, frames) = py.detach(|| {
         with_render_stack(|| {
             render_frames_impl(
@@ -1190,7 +1199,7 @@ fn render_frames<'py>(
             )
         })
     })?;
-    let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+    let frames = frames.into_iter().map(|f| PyBytes::new(py, &f)).collect();
     Ok((w, h, frames))
 }
 
@@ -1266,8 +1275,8 @@ fn render_gif<'py>(
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    validate(width, Some(height), scale)?;
-    validate_gif_args(&times, colors)?;
+    let frame_pixels = validate(width, Some(height), scale)?;
+    validate_gif_args(&times, frame_pixels, colors)?;
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
@@ -1286,7 +1295,7 @@ fn render_gif<'py>(
                 default_font_family,
                 allow_file_urls,
             )?;
-            encode_gif(w, h, &frames, &times, colors)
+            encode_gif(w, h, frames, &times, colors)
         })
     })?;
     Ok(PyBytes::new(py, &gif))
@@ -1652,6 +1661,8 @@ impl TemplateWorker {
 #[pyclass]
 struct Template {
     tx: Mutex<std::sync::mpsc::Sender<TemplateCmd>>,
+    /// Physical pixels per rendered frame, for the animation budget.
+    frame_pixels: u64,
 }
 
 impl Template {
@@ -1700,13 +1711,21 @@ impl Template {
     }
 }
 
-fn validate_times(times: &[f64]) -> PyResult<()> {
+fn validate_times(times: &[f64], frame_pixels: u64) -> PyResult<()> {
     if times.is_empty() {
         return Err(PyValueError::new_err("times must not be empty"));
     }
     if times.len() > MAX_FRAMES {
         return Err(PyValueError::new_err(format!(
             "at most {MAX_FRAMES} frames per call (got {})",
+            times.len()
+        )));
+    }
+    let total = frame_pixels * times.len() as u64;
+    if total > MAX_ANIMATION_PIXELS {
+        return Err(PyValueError::new_err(format!(
+            "{} frames of {frame_pixels} pixels exceed the {MAX_ANIMATION_PIXELS}-pixel \
+             per-call animation budget; render fewer or smaller frames per call",
             times.len()
         )));
     }
@@ -1738,7 +1757,7 @@ impl Template {
         css: Option<&str>,
         css_vars: Option<std::collections::HashMap<String, String>>,
     ) -> PyResult<Self> {
-        validate(width, Some(height), scale)?;
+        let frame_pixels = validate(width, Some(height), scale)?;
         let color_scheme = parse_color_scheme(color_scheme)?;
         let background = parse_background(background)?;
         let html = compose_html(html, css, css_vars)?;
@@ -1788,7 +1807,10 @@ impl Template {
         py.detach(move || init_rx.recv())
             .map_err(|_| PyValueError::new_err("template worker died during construction"))?
             .map_err(PyValueError::new_err)?;
-        Ok(Template { tx: Mutex::new(tx) })
+        Ok(Template {
+            tx: Mutex::new(tx),
+            frame_pixels,
+        })
     }
 
     /// Replace the text content of the element with the given `id`.
@@ -1867,9 +1889,9 @@ impl Template {
         py: Python<'py>,
         times: Vec<f64>,
     ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
-        validate_times(&times)?;
+        validate_times(&times, self.frame_pixels)?;
         let (w, h, frames) = self.request_frames(py, times)?;
-        let frames = frames.iter().map(|f| PyBytes::new(py, f)).collect();
+        let frames = frames.into_iter().map(|f| PyBytes::new(py, &f)).collect();
         Ok((w, h, frames))
     }
 
@@ -1881,9 +1903,9 @@ impl Template {
         times: Vec<f64>,
         colors: u16,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        validate_gif_args(&times, colors)?;
+        validate_gif_args(&times, self.frame_pixels, colors)?;
         let (w, h, frames) = self.request_frames(py, times.clone())?;
-        let gif = py.detach(|| encode_gif(w, h, &frames, &times, colors))?;
+        let gif = py.detach(|| encode_gif(w, h, frames, &times, colors))?;
         Ok(PyBytes::new(py, &gif))
     }
 
