@@ -122,7 +122,7 @@ card = blitz_py.render_png(OG_TEMPLATE, width=1200, height=630,
 png = blitz_py.render_png(email_html, width=600)   # height=None → sized to content
 ```
 
-**Visual snapshot tests** — renders are byte-identical across platforms (CI-verified), so hashes are stable:
+**Visual snapshot tests** — renders are byte-identical across platforms (CI-verified), so hashes are stable for a given blitz-py version (engine upgrades can shift pixels; re-record on upgrade):
 
 ```python
 def test_widget_looks_right():
