@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 permissions:
@@ -73,6 +74,7 @@ jobs:
           fi
           echo "All platforms produced identical renders."
 
+  # Wheels the test jobs below install. Built on every run, PRs included.
   linux-wheels:
     runs-on: ubuntu-latest
     strategy:
@@ -82,23 +84,46 @@ jobs:
           - target: x86_64
             manylinux: "2_28"
             name: manylinux-x86_64
-          - target: aarch64
-            manylinux: "2_28"
-            name: manylinux-aarch64
           - target: x86_64-unknown-linux-musl
             manylinux: musllinux_1_2
             name: musllinux-x86_64
-          - target: aarch64-unknown-linux-musl
-            manylinux: musllinux_1_2
-            name: musllinux-aarch64
           # 32-bit ARM (Raspberry Pi OS 32-bit). Blocked until anyrender
           # 0.14 gained a 32-bit FilterEffect size assertion.
-          - target: armv7
-            manylinux: "2014"
-            name: manylinux-armv7
           - target: armv7-unknown-linux-musleabihf
             manylinux: musllinux_1_2
             name: musllinux-armv7
+    steps:
+      - uses: actions/checkout@v7
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.name }}
+          path: dist
+
+  # Build-only wheels (no job tests them), plus macOS/Windows/sdist below:
+  # skipped on PRs, since `test` already covers each OS. They still run on
+  # main and on tags, and `publish` needs every one of them.
+  linux-wheels-extra:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64
+            manylinux: "2_28"
+            name: manylinux-aarch64
+          - target: aarch64-unknown-linux-musl
+            manylinux: musllinux_1_2
+            name: musllinux-aarch64
+          - target: armv7
+            manylinux: "2014"
+            name: manylinux-armv7
     steps:
       - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
@@ -193,6 +218,7 @@ jobs:
             python -m pytest tests/ -q'
 
   macos-wheels:
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -211,6 +237,7 @@ jobs:
           path: dist
 
   windows-wheels:
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -235,6 +262,7 @@ jobs:
           path: dist
 
   sdist:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -249,7 +277,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test, python-versions, linux-wheels, musl-test, fontless-test, armv7-test, macos-wheels, windows-wheels, sdist]
+    needs: [lint, test, python-versions, linux-wheels, linux-wheels-extra, musl-test, fontless-test, armv7-test, macos-wheels, windows-wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
