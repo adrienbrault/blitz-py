@@ -14,10 +14,15 @@ def render_png(
     fonts: list[bytes] | None = None,
     default_font_family: str | None = None,
     allow_file_urls: bool = False,
+    resources: dict[str, bytes] | None = None,
     css: str | None = None,
     css_vars: dict[str, str] | None = None,
 ) -> bytes:
-    """Render an HTML string to PNG bytes. height=None sizes to content."""
+    """Render an HTML string to PNG bytes. height=None sizes to content.
+
+    resources maps URLs to bytes served in-memory to <img>, <link>, CSS
+    url() and @font-face; keys resolve against base_url like src does, so
+    {"logo.png": data} answers <img src="logo.png">."""
 
 def render_rgba(
     html: str,
@@ -31,6 +36,7 @@ def render_rgba(
     fonts: list[bytes] | None = None,
     default_font_family: str | None = None,
     allow_file_urls: bool = False,
+    resources: dict[str, bytes] | None = None,
     css: str | None = None,
     css_vars: dict[str, str] | None = None,
 ) -> tuple[int, int, bytes]:
@@ -49,6 +55,7 @@ def render_frames(
     fonts: list[bytes] | None = None,
     default_font_family: str | None = None,
     allow_file_urls: bool = False,
+    resources: dict[str, bytes] | None = None,
     css: str | None = None,
     css_vars: dict[str, str] | None = None,
 ) -> tuple[int, int, list[bytes]]:
@@ -67,6 +74,7 @@ def render_jpeg(
     fonts: list[bytes] | None = None,
     default_font_family: str | None = None,
     allow_file_urls: bool = False,
+    resources: dict[str, bytes] | None = None,
     css: str | None = None,
     css_vars: dict[str, str] | None = None,
 ) -> bytes:
@@ -86,6 +94,7 @@ def render_gif(
     fonts: list[bytes] | None = None,
     default_font_family: str | None = None,
     allow_file_urls: bool = False,
+    resources: dict[str, bytes] | None = None,
     css: str | None = None,
     css_vars: dict[str, str] | None = None,
 ) -> bytes:
@@ -127,6 +136,7 @@ class Template:
         fonts: list[bytes] | None = None,
         default_font_family: str | None = None,
         allow_file_urls: bool = False,
+        resources: dict[str, bytes] | None = None,
         css: str | None = None,
         css_vars: dict[str, str] | None = None,
     ) -> None: ...
@@ -233,7 +243,8 @@ def render_layers(
     layers: list[dict[str, _Any]], *, width: int, height: int, background: str = "#000000"
 ) -> tuple[int, int, bytes]:
     """Composite documents/templates: each layer has 'template' or 'html'
-    (+width/height), and optional x, y, opacity, blur, tint, time."""
+    (+width/height and the usual render options, including resources), and
+    optional x, y, opacity, blur, tint, time."""
 
 def render_layers_png(
     layers: list[dict[str, _Any]], *, width: int, height: int, background: str = "#000000"

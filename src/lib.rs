@@ -19,11 +19,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-/// A synchronous resource provider. Resolves `data:` URIs (and optionally
-/// `file://` URLs) inline on the calling thread. All other schemes are
-/// ignored, keeping rendering deterministic and network-free.
+/// A synchronous resource provider. Serves caller-supplied `resources`,
+/// `data:` URIs and (optionally) `file://` URLs inline on the calling
+/// thread. All other URLs are ignored, keeping rendering deterministic and
+/// network-free.
 struct SyncProvider {
     allow_file_urls: bool,
+    /// In-memory resources keyed by absolute URL (fragment stripped).
+    resources: std::collections::HashMap<String, Bytes>,
 }
 
 /// Largest `file://` resource read, in bytes. `data:` URIs need no cap: their
@@ -33,6 +36,14 @@ const MAX_FILE_BYTES: u64 = 64 << 20;
 impl NetProvider for SyncProvider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url;
+        let mut key = url.clone();
+        key.set_fragment(None);
+        if let Some(bytes) = self.resources.get(key.as_str()) {
+            if !image_too_large(bytes) {
+                handler.bytes(url.to_string(), bytes.clone());
+            }
+            return;
+        }
         let bytes = match url.scheme() {
             "data" => {
                 let Ok(data_url) = data_url::DataUrl::process(url.as_str()) else {
@@ -696,6 +707,8 @@ struct DocOptions {
     fonts: Vec<Vec<u8>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    /// Resource bytes by URL, resolved against the base URL like `src`.
+    resources: std::collections::HashMap<String, Vec<u8>>,
 }
 
 fn build_document(
@@ -711,8 +724,19 @@ fn build_document(
         fonts,
         default_font_family,
         allow_file_urls,
+        resources,
     } = opts;
     let base_url = document_base_url(base_url.as_deref())?;
+    let resources = resources
+        .into_iter()
+        .map(|(key, bytes)| {
+            let mut url = base_url
+                .join(&key)
+                .map_err(|_| PyValueError::new_err(format!("invalid resource URL '{key}'")))?;
+            url.set_fragment(None);
+            Ok((url.to_string(), Bytes::from(bytes)))
+        })
+        .collect::<PyResult<_>>()?;
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
@@ -742,7 +766,10 @@ fn build_document(
         html,
         DocumentConfig {
             base_url: Some(base_url.into()),
-            net_provider: Some(Arc::new(SyncProvider { allow_file_urls })),
+            net_provider: Some(Arc::new(SyncProvider {
+                allow_file_urls,
+                resources,
+            })),
             viewport: Some(Viewport::new(
                 physical_width,
                 physical_height,
@@ -1094,7 +1121,7 @@ fn encode_png(result: &RenderResult) -> Vec<u8> {
 ///
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_png<'py>(
     py: Python<'py>,
@@ -1108,6 +1135,7 @@ fn render_png<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
@@ -1129,6 +1157,7 @@ fn render_png<'py>(
                     fonts: fonts.unwrap_or_default(),
                     default_font_family,
                     allow_file_urls,
+                    resources: resources.unwrap_or_default(),
                 },
             )?;
             Ok(encode_png(&result))
@@ -1143,7 +1172,7 @@ fn render_png<'py>(
 /// bytes of RGBA data — ready for `PIL.Image.frombytes("RGBA", (w, h), data)`.
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_rgba<'py>(
     py: Python<'py>,
@@ -1157,6 +1186,7 @@ fn render_rgba<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<(u32, u32, Bound<'py, PyBytes>)> {
@@ -1178,6 +1208,7 @@ fn render_rgba<'py>(
                     fonts: fonts.unwrap_or_default(),
                     default_font_family,
                     allow_file_urls,
+                    resources: resources.unwrap_or_default(),
                 },
             )
         })
@@ -1201,7 +1232,7 @@ fn render_rgba<'py>(
 ///              duration=50, loop=0)
 /// ```
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height, times, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height, times, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_frames<'py>(
     py: Python<'py>,
@@ -1216,6 +1247,7 @@ fn render_frames<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<(u32, u32, Vec<Bound<'py, PyBytes>>)> {
@@ -1239,6 +1271,7 @@ fn render_frames<'py>(
                     fonts: fonts.unwrap_or_default(),
                     default_font_family,
                     allow_file_urls,
+                    resources: resources.unwrap_or_default(),
                 },
             )
         })
@@ -1252,7 +1285,7 @@ fn render_frames<'py>(
 /// JPEG has no alpha channel — use an opaque `background` (the default).
 /// With `height=None` the canvas height is sized to the laid-out content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height=None, quality=90, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height=None, quality=90, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_jpeg<'py>(
     py: Python<'py>,
@@ -1267,6 +1300,7 @@ fn render_jpeg<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
@@ -1289,6 +1323,7 @@ fn render_jpeg<'py>(
                     fonts: fonts.unwrap_or_default(),
                     default_font_family,
                     allow_file_urls,
+                    resources: resources.unwrap_or_default(),
                 },
             )?;
             encode_jpeg(&result, quality)
@@ -1302,7 +1337,7 @@ fn render_jpeg<'py>(
 /// Frame delays follow the spacing of `times`. One shared `colors`-entry
 /// palette, no dithering, delta-encoded frames — tuned for UI-style content.
 #[pyfunction]
-#[pyo3(signature = (html, *, width, height, times, colors=64, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+#[pyo3(signature = (html, *, width, height, times, colors=64, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
 #[allow(clippy::too_many_arguments)]
 fn render_gif<'py>(
     py: Python<'py>,
@@ -1318,6 +1353,7 @@ fn render_gif<'py>(
     fonts: Option<Vec<Vec<u8>>>,
     default_font_family: Option<String>,
     allow_file_urls: bool,
+    resources: Option<std::collections::HashMap<String, Vec<u8>>>,
     css: Option<&str>,
     css_vars: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyBytes>> {
@@ -1341,6 +1377,7 @@ fn render_gif<'py>(
                     fonts: fonts.unwrap_or_default(),
                     default_font_family,
                     allow_file_urls,
+                    resources: resources.unwrap_or_default(),
                 },
             )?;
             encode_gif(w, h, frames, &times, colors)
@@ -1788,7 +1825,7 @@ fn validate_times(times: &[f64], frame_pixels: u64) -> PyResult<()> {
 #[pymethods]
 impl Template {
     #[new]
-    #[pyo3(signature = (html, *, width, height, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, css=None, css_vars=None))]
+    #[pyo3(signature = (html, *, width, height, scale=1.0, color_scheme="light", background="#ffffff", base_url=None, fonts=None, default_font_family=None, allow_file_urls=false, resources=None, css=None, css_vars=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -1802,6 +1839,7 @@ impl Template {
         fonts: Option<Vec<Vec<u8>>>,
         default_font_family: Option<String>,
         allow_file_urls: bool,
+        resources: Option<std::collections::HashMap<String, Vec<u8>>>,
         css: Option<&str>,
         css_vars: Option<std::collections::HashMap<String, String>>,
     ) -> PyResult<Self> {
@@ -1814,6 +1852,7 @@ impl Template {
             fonts: fonts.unwrap_or_default(),
             default_font_family,
             allow_file_urls,
+            resources: resources.unwrap_or_default(),
         };
 
         let (tx, rx) = std::sync::mpsc::channel::<TemplateCmd>();
@@ -2123,6 +2162,7 @@ fn parse_layers(layers: &[Bound<'_, pyo3::types::PyDict>]) -> PyResult<Vec<Layer
                         fonts: dict_get(dict, "fonts")?.unwrap_or_default(),
                         default_font_family: dict_get(dict, "default_font_family")?,
                         allow_file_urls: dict_get(dict, "allow_file_urls")?.unwrap_or(false),
+                        resources: dict_get(dict, "resources")?.unwrap_or_default(),
                     },
                     time,
                 }
