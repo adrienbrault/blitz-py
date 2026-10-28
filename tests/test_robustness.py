@@ -74,3 +74,27 @@ class TestHostileInputs:
 
     def test_extremely_long_word(self):
         assert render("<p>" + "x" * 100_000 + "</p>")
+
+    def test_relative_urls_without_base_url(self):
+        # Without base_url, relative URLs used to panic in the engine
+        # (pyo3_runtime.PanicException, which `except Exception` misses).
+        assert render(
+            "<img src='logo.png'><img src='//host/x.png'><img src='/abs.png'>"
+            "<link rel=stylesheet href='a.css'><iframe src='frame.html'></iframe>"
+            "<style>@font-face{font-family:X;src:url(x.ttf)}</style>"
+            "<div style='background:url(bg.png)'>x</div>"
+        )
+        tpl = blitz_py.Template("<img src='logo.png'>", width=32, height=32)
+        assert tpl.render_png()
+
+
+class TestBaseUrl:
+    @pytest.mark.parametrize("bad", ["not a url", "mailto:x@y.z", "data:text/html,x"])
+    def test_rejects_unusable_base_url(self, bad):
+        with pytest.raises(ValueError, match="base_url"):
+            blitz_py.render_png("<img src='a.png'>", width=8, height=8, base_url=bad)
+
+    def test_accepts_hierarchical_base_url(self):
+        assert blitz_py.render_png(
+            "<img src='a.png'>", width=8, height=8, base_url="https://example.com/x/"
+        )

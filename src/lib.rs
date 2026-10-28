@@ -11,7 +11,7 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::DocumentConfig;
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
-use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
+use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request, Url};
 use blitz_traits::shell::{ColorScheme, Viewport};
 use peniko::kurbo::Rect;
 use peniko::Fill;
@@ -636,6 +636,24 @@ fn wrap_balanced(
     })
 }
 
+/// Base URL for documents rendered without `base_url`. The engine's own
+/// default (a `data:` URL) cannot anchor relative URLs, and blitz-dom panics
+/// resolving e.g. `<img src="logo.png">` against it. A hierarchical base lets
+/// them resolve; SyncProvider never fetches this scheme.
+const DEFAULT_BASE_URL: &str = "blitz-py:///";
+
+/// The document base URL: `base_url` if given (it must be able to anchor
+/// relative URLs, for the reason above), else `DEFAULT_BASE_URL`.
+fn document_base_url(base_url: Option<&str>) -> PyResult<Url> {
+    let raw = base_url.unwrap_or(DEFAULT_BASE_URL);
+    match Url::parse(raw) {
+        Ok(url) if !url.cannot_be_a_base() => Ok(url),
+        _ => Err(PyValueError::new_err(format!(
+            "base_url must be an absolute hierarchical URL (e.g. 'file:///assets/'), got '{raw}'"
+        ))),
+    }
+}
+
 /// Per-document resource and font options, shared by every render entry
 /// point (module functions, `Template`, html layers).
 struct DocOptions {
@@ -659,6 +677,7 @@ fn build_document(
         default_font_family,
         allow_file_urls,
     } = opts;
+    let base_url = document_base_url(base_url.as_deref())?;
     // Bundled Inter is the default for generic families and Latin fallback,
     // making output identical across platforms (and non-blank on systems
     // without fonts). Explicit CSS family names still resolve to system
@@ -687,7 +706,7 @@ fn build_document(
     Ok(HtmlDocument::from_html(
         html,
         DocumentConfig {
-            base_url,
+            base_url: Some(base_url.into()),
             net_provider: Some(Arc::new(SyncProvider { allow_file_urls })),
             viewport: Some(Viewport::new(
                 physical_width,
