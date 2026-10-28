@@ -1090,21 +1090,65 @@ fn validate_gif_args(times: &[f64], frame_pixels: u64, colors: u16) -> PyResult<
     validate_times(times, frame_pixels)
 }
 
-/// Run `f` on a thread with a large explicit stack. Style and layout
-/// traversals recurse per DOM-nesting level; Windows threads default to
-/// ~1MB of stack (vs 8MB on Linux/macOS), which deeply nested documents
-/// overflow — crashing the whole process. 64MB is reserved lazily, so the
-/// cost is only the ~tens of µs thread spawn.
-fn with_render_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("blitz-py-render".into())
-            .stack_size(64 << 20)
-            .spawn_scoped(scope, f)
-            .expect("failed to spawn render thread")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })
+/// Stack size of render threads. Style and layout traversals recurse per
+/// DOM-nesting level; Windows threads default to ~1MB of stack (vs 8MB on
+/// Linux/macOS), which deeply nested documents overflow — crashing the whole
+/// process. 64MB is reserved lazily, so it costs address space, not memory.
+const RENDER_STACK_BYTES: usize = 64 << 20;
+
+type RenderJob = Box<dyn FnOnce() + Send>;
+
+/// Idle render workers, each blocked on its own job channel.
+static IDLE_RENDER_WORKERS: Mutex<Vec<std::sync::mpsc::Sender<RenderJob>>> = Mutex::new(Vec::new());
+
+fn spawn_render_worker() -> std::sync::mpsc::Sender<RenderJob> {
+    let (tx, rx) = std::sync::mpsc::channel::<RenderJob>();
+    std::thread::Builder::new()
+        .name("blitz-py-render".into())
+        .stack_size(RENDER_STACK_BYTES)
+        .spawn(move || {
+            while let Ok(job) = rx.recv() {
+                job();
+            }
+        })
+        .expect("failed to spawn render thread");
+    tx
+}
+
+/// Run `f` on a pooled render thread with a large stack (see
+/// `RENDER_STACK_BYTES`) and return its result, re-raising its panic.
+///
+/// Threads are reused rather than spawned per call: every fresh thread that
+/// renders leaves per-thread engine state behind that is never freed
+/// (~16-37KB per call, geekmagic-hacs#209). A caller takes an idle worker or
+/// starts a new one when all are busy, so the pool grows to the peak number
+/// of concurrent renders and no further.
+fn with_render_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let mut job: RenderJob = Box::new(move || {
+        // Catch here so a panicking render neither kills the worker nor
+        // loses the payload; it is resumed on the calling thread below.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let _ = result_tx.send(result);
+    });
+    let idle_workers = || {
+        IDLE_RENDER_WORKERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    let mut worker = idle_workers().pop();
+    let worker = loop {
+        let candidate = worker.take().unwrap_or_else(spawn_render_worker);
+        match candidate.send(job) {
+            Ok(()) => break candidate,
+            // Worker thread gone (cannot happen while jobs catch panics,
+            // but cheap to survive): retry on a fresh one.
+            Err(std::sync::mpsc::SendError(returned)) => job = returned,
+        }
+    };
+    let result = result_rx.recv().expect("render worker exited mid-job");
+    idle_workers().push(worker);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 fn encode_png(result: &RenderResult) -> Vec<u8> {
@@ -1151,8 +1195,8 @@ fn render_png<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
+    let result = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
             let result = render_impl(
                 &html,
                 width,
@@ -1202,8 +1246,8 @@ fn render_rgba<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| {
-        with_render_stack(|| {
+    let result = py.detach(move || {
+        with_render_stack(move || {
             render_impl(
                 &html,
                 width,
@@ -1264,8 +1308,8 @@ fn render_frames<'py>(
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
     validate_times(&times, frame_pixels)?;
-    let (w, h, frames) = py.detach(|| {
-        with_render_stack(|| {
+    let (w, h, frames) = py.detach(move || {
+        with_render_stack(move || {
             render_frames_impl(
                 &html,
                 width,
@@ -1317,8 +1361,8 @@ fn render_jpeg<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let result = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
+    let result = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
             let result = render_impl(
                 &html,
                 width,
@@ -1370,8 +1414,8 @@ fn render_gif<'py>(
     let color_scheme = parse_color_scheme(color_scheme)?;
     let background = parse_background(background)?;
     let html = compose_html(html, css, css_vars)?;
-    let gif = py.detach(|| -> PyResult<Vec<u8>> {
-        with_render_stack(|| {
+    let gif = py.detach(move || -> PyResult<Vec<u8>> {
+        with_render_stack(move || {
             let (w, h, frames) = render_frames_impl(
                 &html,
                 width,
@@ -2379,7 +2423,7 @@ fn layers_common(
     validate(width, Some(height), 1.0)?;
     let background = parse_hex_rgba(background)?;
     let specs = parse_layers(&layers)?;
-    py.detach(|| with_render_stack(|| run_layers(specs, width, height, background)))
+    py.detach(move || with_render_stack(move || run_layers(specs, width, height, background)))
 }
 
 /// Composite several documents and/or templates into one surface.
@@ -2454,4 +2498,58 @@ fn blitz_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_layers_jpeg, m)?)?;
     m.add_class::<Template>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idle_workers() -> usize {
+        IDLE_RENDER_WORKERS.lock().unwrap().len()
+    }
+
+    #[test]
+    fn render_pool_reuses_and_survives_panics() {
+        // One test so the global pool's size is not perturbed by others.
+        assert_eq!(with_render_stack(|| 41 + 1), 42);
+        let thread_of = || with_render_stack(|| std::thread::current().id());
+        let first = thread_of();
+        assert_eq!(thread_of(), first, "idle worker is reused");
+        assert_eq!(idle_workers(), 1);
+
+        let panicked = std::panic::catch_unwind(|| with_render_stack(|| panic!("boom")));
+        let payload = panicked.expect_err("panic reaches the caller");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"boom"));
+        assert_eq!(thread_of(), first, "worker survives the panic");
+        assert_eq!(idle_workers(), 1);
+
+        // Deep recursion that would overflow a default 2MB/1MB stack.
+        fn depth(n: u32) -> u32 {
+            let pad = std::hint::black_box([0u8; 1024]);
+            if n == 0 {
+                pad[0] as u32
+            } else {
+                depth(n - 1) + pad[1] as u32
+            }
+        }
+        assert_eq!(with_render_stack(|| depth(20_000)), 0);
+
+        // Concurrent callers each get a worker; the pool grows to the peak.
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    with_render_stack(move || {
+                        barrier.wait(); // deadlocks unless 4 workers run at once
+                        std::thread::current().id()
+                    })
+                })
+            })
+            .collect();
+        let ids: std::collections::HashSet<_> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(ids.len(), 4);
+        assert_eq!(idle_workers(), 4);
+    }
 }

@@ -35,6 +35,8 @@ jobs:
         with:
           python-version: "3.14"
       - uses: Swatinem/rust-cache@v2
+      - name: Rust unit tests
+        run: cargo test --lib
       - name: Build and install
         shell: bash
         run: |

@@ -307,6 +307,19 @@ class TestTemplate:
             results = list(pool.map(lambda i: tpl.render_png(), range(16)))
         assert all(r == results[0] for r in results)
 
+    def test_concurrent_one_shot_renders(self):
+        # One-shot renders run on a pool of reused render threads; concurrent
+        # callers must each get one (not queue on a single worker) and get
+        # identical output.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def render(i):
+            return blitz_py.render_png(self.HTML, width=100, height=50)
+
+        with ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(render, range(32)))
+        assert all(r == results[0] for r in results)
+
 
 class TestJpeg:
     def test_magic_and_size(self):
