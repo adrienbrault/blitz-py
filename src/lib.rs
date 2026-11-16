@@ -6,6 +6,8 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+mod shadow;
+
 use anyrender::{render_to_buffer, PaintScene as _};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::DocumentConfig;
@@ -803,7 +805,7 @@ fn paint_frame(
                 );
             }
             paint_scene(
-                scene,
+                &mut shadow::ClampShadows(scene),
                 document.as_mut(),
                 scale as f64,
                 physical_width,
