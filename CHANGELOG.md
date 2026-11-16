@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Wide-gamut `box-shadow` colours no longer paint red.** A shadow colour outside sRGB (`oklch()`, `color(display-p3 …)`, every vivid colour in Tailwind v4's palette) reaches the rasterizer with a channel below 0, and vello_cpu's blurred-shadow fill paints that channel at full intensity: an emerald `oklch(76.5% 0.177 163.2)` glow came out red, blurred or spread. Shadow colours are now clamped to the sRGB gamut, as fills already are. In-gamut shadows render exactly as before (golden hashes unchanged). Found in [geekmagic-hacs#307](https://github.com/adrienbrault/geekmagic-hacs/pull/307).
+
 ## 0.6.0 — 2026-10-28
 
 ### Changed
