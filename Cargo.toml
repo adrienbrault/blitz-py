@@ -19,7 +19,10 @@ blitz-html = "=0.3.0-beta.4"
 blitz-paint = "=0.3.0-beta.4"
 blitz-traits = "=0.3.0-beta.4"
 anyrender = "0.14"
-anyrender_vello_cpu = "0.18"
+# filters: CSS `filter` (blur, drop-shadow, colour matrices). Without it the
+# rasterizer drops every filter blitz-paint converts. Never with
+# multithreading, which turns filters back off.
+anyrender_vello_cpu = { version = "0.18", features = ["filters"] }
 parley = "0.12"
 # fontconfig-dlopen: load fontconfig at runtime if present instead of linking
 # it. Keeps Linux wheels free of a libfontconfig link dependency (forbidden by

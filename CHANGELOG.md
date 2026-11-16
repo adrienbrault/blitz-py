@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **CSS `filter: blur()` and `drop-shadow()`** now render. The engine converted them all along, but the rasterizer's `filters` feature was off, so every filter was dropped. Only the first function of a filter list applies (`blur(4px) grayscale(1)` blurs), and `backdrop-filter` stays unsupported.
+
 ### Fixed
-- **Wide-gamut `box-shadow` colours no longer paint red.** A shadow colour outside sRGB (`oklch()`, `color(display-p3 …)`, every vivid colour in Tailwind v4's palette) reaches the rasterizer with a channel below 0, and vello_cpu's blurred-shadow fill paints that channel at full intensity: an emerald `oklch(76.5% 0.177 163.2)` glow came out red, blurred or spread. Shadow colours are now clamped to the sRGB gamut, as fills already are. In-gamut shadows render exactly as before (golden hashes unchanged). Found in [geekmagic-hacs#307](https://github.com/adrienbrault/geekmagic-hacs/pull/307).
+- **Wide-gamut `box-shadow` colours paint their colour, identically on every CPU.** A shadow colour outside sRGB (`oklch()`, `color(display-p3 …)`, most of Tailwind v4's palette) reached the rasterizer with channels below 0 or above 1, and the blurred-shadow fill (every blurred or spread `box-shadow`) converted them to bytes unclamped with SIMD: below 0 became 255 on AVX-512, wrapped on AVX2 and saturated on ARM, so an emerald `oklch(76.5% 0.177 163.2)` glow came out red on x86 and the same document rendered differently across CPUs; above 1 wrapped dark everywhere. Shadow colours are now clamped to the sRGB gamut, as fills already are. Found in [geekmagic-hacs#307](https://github.com/adrienbrault/geekmagic-hacs/pull/307).
+- **Colour filters (`grayscale()`, `sepia()`, `saturate()`, `brightness()`, `contrast()`, `invert()`, `hue-rotate()`, `opacity()`) are ignored instead of panicking.** The rasterizer implements blur, drop shadow, offset and flood only; anything else hits an `unimplemented!()` there once filters are on, which would surface as a `PanicException`. They render unfiltered, as before.
 
 ## 0.6.0 — 2026-10-28
 

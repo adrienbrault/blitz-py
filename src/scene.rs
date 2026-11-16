@@ -1,17 +1,29 @@
-//! Box-shadow colours clamped to the sRGB gamut before vello_cpu sees them.
+//! The scene blitz-paint draws into, adapted to what vello_cpu can paint.
 //!
-//! blitz-paint converts a shadow's colour to sRGB without gamut mapping, so
-//! a wide-gamut colour (`oklch()`, `color(display-p3 ...)`, Tailwind v4's
-//! palette) can arrive with a channel below 0 or above 1. Fills tolerate
-//! that, but vello_cpu's `fill_blurred_rounded_rect` (every blurred or
-//! spread `box-shadow`) does not: a channel at -0.2 paints at full
-//! intensity, so an emerald `oklch(76.5% 0.177 163.2)` glow comes out red.
-//! [`ClampShadows`] wraps the scene blitz-paint draws into and clamps
-//! `draw_box_shadow`'s colour per channel, which is what fills effectively
-//! do. Everything else is forwarded untouched. See docs/UPSTREAM.md.
+//! [`EngineScene`] wraps the rasterizer's scene and forwards every call,
+//! except where blitz-paint hands vello_cpu something it mishandles:
+//!
+//! - **Box-shadow colours outside sRGB.** blitz-paint converts a shadow's
+//!   colour to sRGB without gamut mapping, so a wide-gamut colour
+//!   (`oklch()`, `color(display-p3 ...)`, Tailwind v4's palette) can
+//!   arrive with a channel below 0 or above 1. Fills tolerate that, but
+//!   vello_cpu's `fill_blurred_rounded_rect` (every blurred or spread
+//!   `box-shadow`) does not: a channel at -0.2 paints at full intensity,
+//!   so an emerald `oklch(76.5% 0.177 163.2)` glow comes out red. The
+//!   colour is clamped per channel, which is what fills effectively do.
+//! - **Filters vello_cpu doesn't implement.** With anyrender_vello_cpu's
+//!   `filters` feature, CSS `filter: blur()` / `drop-shadow()` render, but
+//!   the colour filters (`grayscale()`, `sepia()`, `brightness()`, ...)
+//!   become colour-matrix primitives that vello_cpu answers with
+//!   `unimplemented!()`: a panic, i.e. a `PanicException` in Python. Only
+//!   filters whose (first, and only used) primitive vello_cpu implements are
+//!   passed on; the others are dropped, as they were before filters were on.
+//!
+//! See docs/UPSTREAM.md.
 
 use std::sync::Arc;
 
+use anyrender::filters::FilterEffect;
 use anyrender::{
     Filter, Glyph, NormalizedCoord, PaintRef, PaintScene, RegisterResourceError, RenderContext,
     ResourceId,
@@ -19,7 +31,7 @@ use anyrender::{
 use peniko::kurbo::{Affine, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
 
-pub(crate) struct ClampShadows<'p, S: PaintScene>(pub(crate) &'p mut S);
+pub(crate) struct EngineScene<'p, S: PaintScene>(pub(crate) &'p mut S);
 
 /// `color` with each colour channel clamped to 0..=1 (alpha untouched).
 pub(crate) fn clamp_to_srgb(color: Color) -> Color {
@@ -27,7 +39,23 @@ pub(crate) fn clamp_to_srgb(color: Color) -> Color {
     Color::new([r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), a])
 }
 
-impl<S: PaintScene> RenderContext for ClampShadows<'_, S> {
+/// `filter` when vello_cpu can paint it, else None.
+///
+/// anyrender_vello_cpu 0.18 converts only a filter's first node, and
+/// vello_cpu 0.3 implements flood, Gaussian blur, drop shadow and offset;
+/// anything else reaches an `unimplemented!()`.
+pub(crate) fn paintable(filter: Option<Arc<Filter>>) -> Option<Arc<Filter>> {
+    let first = filter.as_ref()?.nodes().first()?;
+    match first.effect {
+        FilterEffect::Flood(_)
+        | FilterEffect::GaussianBlur(_)
+        | FilterEffect::DropShadow(_)
+        | FilterEffect::Offset(_) => filter,
+        _ => None,
+    }
+}
+
+impl<S: PaintScene> RenderContext for EngineScene<'_, S> {
     fn try_register_custom_resource(
         &mut self,
         resource: Box<dyn std::any::Any>,
@@ -44,7 +72,7 @@ impl<S: PaintScene> RenderContext for ClampShadows<'_, S> {
     }
 }
 
-impl<S: PaintScene> PaintScene for ClampShadows<'_, S> {
+impl<S: PaintScene> PaintScene for EngineScene<'_, S> {
     fn reset(&mut self) {
         self.0.reset();
     }
@@ -59,8 +87,15 @@ impl<S: PaintScene> PaintScene for ClampShadows<'_, S> {
         filter: Option<Arc<Filter>>,
         backdrop_filter: Option<Arc<Filter>>,
     ) {
-        self.0
-            .push_layer(fill, blend, alpha, transform, clip, filter, backdrop_filter);
+        self.0.push_layer(
+            fill,
+            blend,
+            alpha,
+            transform,
+            clip,
+            paintable(filter),
+            backdrop_filter,
+        );
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
@@ -139,6 +174,15 @@ impl<S: PaintScene> PaintScene for ClampShadows<'_, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_only_filters_vello_cpu_paints() {
+        let one = |effect: FilterEffect| Some(Arc::new(Filter::linear_list([effect].into_iter())));
+        assert!(paintable(one(FilterEffect::blur(4.0))).is_some());
+        assert!(paintable(one(FilterEffect::grayscale(1.0))).is_none());
+        assert!(paintable(one(FilterEffect::sepia(1.0))).is_none());
+        assert!(paintable(None).is_none());
+    }
 
     #[test]
     fn clamps_colour_channels_but_not_alpha() {
