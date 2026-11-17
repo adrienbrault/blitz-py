@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+### Changed
+- **Engine: blitz-py's Blitz**, the `blitz-py` branch of [adrienbrault/blitz](https://github.com/adrienbrault/blitz) @ `d9099ef`: upstream `main` @ `81b4896` (188 commits past `0.3.0-beta.4`) plus the fork's fix branches `outline-offset` and `text-overflow` ellipsis, pinned with `[patch.crates-io]` (see `docs/UPSTREAM.md` for the model and how the pin moves). Brings Stylo 0.24, Parley/fontique 0.13, anyrender 0.15 / vello_cpu 0.4.
+- **Large text in Inter is narrower**: the engine now applies `font-optical-sizing: auto`, so fonts with an optical-size axis (the bundled Inter Variable) use the cut drawn for that size; 64px semibold "21.5°" is 136px wide instead of 147px. `font-optical-sizing: none` restores the previous rendering. Golden hashes differ from 0.6.0 for text; renders stay byte-identical across platforms.
+
 ### Added
-- **CSS `filter: blur()` and `drop-shadow()`** now render. The engine converted them all along, but the rasterizer's `filters` feature was off, so every filter was dropped. Only the first function of a filter list applies (`blur(4px) grayscale(1)` blurs), and `backdrop-filter` stays unsupported.
+- **`text-shadow`** renders: offsets, blur and several shadows.
+- **`text-overflow: ellipsis`** paints "…" at the end of a line cut by an `overflow: hidden` box (and a string marker for `text-overflow: "..."`).
+- **`outline-offset`**, and outlines are painted over the element's content.
+- **CSS `filter: blur()` and `drop-shadow()`** now render. The engine converted them all along, but the rasterizer's `filters` feature was off, so every filter was dropped. Only the first function of a filter list applies (`blur(4px) grayscale(1)` blurs), and `backdrop-filter` stays unsupported. Known issue: inside an `overflow: hidden` ancestor with square corners, a filtered element (or a blurred `text-shadow`) is cut on its top and left by up to the blur's reach (a rasterizer bug, see `docs/UPSTREAM.md`).
 
 ### Fixed
-- **Wide-gamut `box-shadow` colours paint their colour, identically on every CPU.** A shadow colour outside sRGB (`oklch()`, `color(display-p3 …)`, most of Tailwind v4's palette) reached the rasterizer with channels below 0 or above 1, and the blurred-shadow fill (every blurred or spread `box-shadow`) converted them to bytes unclamped with SIMD: below 0 became 255 on AVX-512, wrapped on AVX2 and saturated on ARM, so an emerald `oklch(76.5% 0.177 163.2)` glow came out red on x86 and the same document rendered differently across CPUs; above 1 wrapped dark everywhere. Shadow colours are now clamped to the sRGB gamut, as fills already are. Found in [geekmagic-hacs#307](https://github.com/adrienbrault/geekmagic-hacs/pull/307).
+- **Wide-gamut `box-shadow` colours paint their colour, identically on every CPU.** A shadow colour outside sRGB (`oklch()`, `color(display-p3 …)`, most of Tailwind v4's palette) reached the rasterizer with channels below 0 or above 1, and the blurred-shadow fill (every blurred `box-shadow`) converted them to bytes unclamped with SIMD: below 0 became 255 on AVX-512, wrapped on AVX2 and saturated on ARM, so an emerald `oklch(76.5% 0.177 163.2)` glow came out red on x86 and the same document rendered differently across CPUs; above 1 wrapped dark everywhere. Shadow colours are now clamped to the sRGB gamut, as fills already are. Found in [geekmagic-hacs#307](https://github.com/adrienbrault/geekmagic-hacs/pull/307).
 - **Colour filters (`grayscale()`, `sepia()`, `saturate()`, `brightness()`, `contrast()`, `invert()`, `hue-rotate()`, `opacity()`) are ignored instead of panicking.** The rasterizer implements blur, drop shadow, offset and flood only; anything else hits an `unimplemented!()` there once filters are on, which would surface as a `PanicException`. They render unfiltered, as before.
 
 ## 0.6.0 — 2026-10-28
