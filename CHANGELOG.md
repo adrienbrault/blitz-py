@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-11-17
 
 ### Changed
 - **Engine: blitz-py's Blitz**, the `blitz-py` branch of [adrienbrault/blitz](https://github.com/adrienbrault/blitz) @ `d9099ef`: upstream `main` @ `81b4896` (188 commits past `0.3.0-beta.4`) plus the fork's fix branches `outline-offset` and `text-overflow` ellipsis, pinned with `[patch.crates-io]` (see `docs/UPSTREAM.md` for the model and how the pin moves). Brings Stylo 0.24, Parley/fontique 0.13, anyrender 0.15 / vello_cpu 0.4.
