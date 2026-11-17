@@ -1,13 +1,13 @@
 """Box-shadow colours outside the sRGB gamut (oklch, display-p3, Tailwind v4).
 
 blitz-paint converts the colour to sRGB without gamut mapping, and
-vello_cpu's blurred-rounded-rect fill (every blurred or spread shadow)
-converts the raw channel to u8 with SIMD: a channel below 0 becomes 255 on
-AVX-512, wraps on AVX2 and saturates to 0 on NEON, and a channel above 1
-wraps dark everywhere. An emerald glow came out red (x86) and output
-differed by CPU. Fills clamp; shadows now do too (src/scene.rs,
-docs/UPSTREAM.md). The below-0 cases only fail without the fix on x86;
-the above-1 case fails on every platform.
+vello_cpu's blurred-rounded-rect fill (every blurred shadow) converts the
+raw channel to u8 with SIMD: a channel below 0 becomes 255 on AVX-512,
+wraps on AVX2 and saturates to 0 on NEON, and a channel above 1 wraps dark
+everywhere. An emerald glow came out red (x86) and output differed by CPU.
+Unblurred (spread-only) shadows are solid fills, which saturate. Shadows
+are clamped now (src/scene.rs, docs/UPSTREAM.md). Without the clamp the
+blurred below-0 cases fail on x86 and the blurred above-1 case everywhere.
 """
 
 import pytest
@@ -59,7 +59,9 @@ def test_in_gamut_shadows_are_unchanged() -> None:
     assert shadow_pixel("0 0 0 8px rgb(0, 204, 128)")[:3] == (0, 204, 128)
 
 
-def test_channel_above_one_does_not_wrap_dark() -> None:
+@pytest.mark.parametrize("geometry", ["0 0 0 8px", "0 0 2px 12px"])  # spread, blurred
+def test_channel_above_one_does_not_wrap_dark(geometry: str) -> None:
     """Above 1 wraps on every SIMD level (below 0 only on some): clamped now."""
-    _, g, _, _ = shadow_pixel("0 0 0 8px color(srgb 0.2 1.3 0.5)")
-    assert g == 255
+    clamped = shadow_pixel(f"{geometry} color(srgb 0.2 1 0.5)")
+    assert clamped[1] == 255
+    assert shadow_pixel(f"{geometry} color(srgb 0.2 1.3 0.5)") == clamped
