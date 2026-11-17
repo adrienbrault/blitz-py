@@ -6,7 +6,9 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use anyrender::{render_to_buffer, PaintScene as _};
+mod scene;
+
+use anyrender::{render_to_buffer, AntiAliasing, PaintScene as _};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::DocumentConfig;
 use blitz_html::HtmlDocument;
@@ -800,10 +802,11 @@ fn paint_frame(
                     color,
                     Default::default(),
                     &Rect::new(0.0, 0.0, physical_width as f64, physical_height as f64),
+                    AntiAliasing::Enabled,
                 );
             }
             paint_scene(
-                scene,
+                &mut scene::EngineScene::new(scene),
                 document.as_mut(),
                 scale as f64,
                 physical_width,

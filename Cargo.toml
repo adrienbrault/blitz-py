@@ -12,20 +12,26 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.30", features = ["abi3-py310", "generate-import-lib"] }
-# The anyrender/anyrender_vello_cpu/parley versions below must match the
-# blitz release's workspace Cargo.toml; re-pair on every bump (docs/UPSTREAM.md).
+# The Blitz crates come from a pinned commit of the fork's `blitz-py` branch
+# ([patch.crates-io] below); these requirements are the version that commit's
+# workspace carries. anyrender/anyrender_vello_cpu/parley/fontique/peniko
+# must match that commit's workspace Cargo.toml: re-pair on every pin bump
+# (docs/UPSTREAM.md).
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["woff"] }
 blitz-html = "=0.3.0-beta.4"
 blitz-paint = "=0.3.0-beta.4"
 blitz-traits = "=0.3.0-beta.4"
-anyrender = "0.14"
-anyrender_vello_cpu = "0.18"
-parley = "0.12"
+anyrender = "0.15"
+# filters: CSS `filter: blur()` / `drop-shadow()` and blurred `text-shadow`.
+# Without it the rasterizer drops every filter blitz-paint converts. Never with
+# multithreading, which turns filters back off.
+anyrender_vello_cpu = { version = "0.19", features = ["filters"] }
+parley = "0.13"
 # fontconfig-dlopen: load fontconfig at runtime if present instead of linking
 # it. Keeps Linux wheels free of a libfontconfig link dependency (forbidden by
 # manylinux/musllinux policies) while still discovering system fonts on
 # distros that have it.
-fontique = { version = "0.12", features = ["fontconfig-dlopen"] }
+fontique = { version = "0.13", features = ["fontconfig-dlopen"] }
 peniko = "0.6"
 data-url = "0.3"
 # Header-only dimension sniffing for the decode-bomb guard. Same version and
@@ -35,6 +41,19 @@ png = "0.18"
 jpeg-encoder = "0.7"
 color_quant = "2"
 gif = "0.14"
+
+# blitz-py's Blitz: the `blitz-py` branch of adrienbrault/blitz, which is
+# upstream main plus the merged fix branches, pinned to one commit. To bump,
+# set `rev` (all four lines, and fuzz/Cargo.toml) to the branch's new head and
+# run `cargo update -p blitz-dom`; docs/UPSTREAM.md has the procedure. If the
+# fork's workspace version ever moves past the requirements above, cargo only
+# warns "patch ... was not used" and builds crates.io's release: move the
+# requirements with the rev.
+[patch.crates-io]
+blitz-dom = { git = "https://github.com/adrienbrault/blitz", rev = "d9099efa6d0a85eb40a93c2881b6c0b92c98a50b" }
+blitz-html = { git = "https://github.com/adrienbrault/blitz", rev = "d9099efa6d0a85eb40a93c2881b6c0b92c98a50b" }
+blitz-paint = { git = "https://github.com/adrienbrault/blitz", rev = "d9099efa6d0a85eb40a93c2881b6c0b92c98a50b" }
+blitz-traits = { git = "https://github.com/adrienbrault/blitz", rev = "d9099efa6d0a85eb40a93c2881b6c0b92c98a50b" }
 
 [profile.release]
 opt-level = "s"
