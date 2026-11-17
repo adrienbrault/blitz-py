@@ -4,7 +4,8 @@
 
 ### Changed
 - **Engine: blitz-py's Blitz**, the `blitz-py` branch of [adrienbrault/blitz](https://github.com/adrienbrault/blitz) @ `d9099ef`: upstream `main` @ `81b4896` (188 commits past `0.3.0-beta.4`) plus the fork's fix branches `outline-offset` and `text-overflow` ellipsis, pinned with `[patch.crates-io]` (see `docs/UPSTREAM.md` for the model and how the pin moves). Brings Stylo 0.24, Parley/fontique 0.13, anyrender 0.15 / vello_cpu 0.4.
-- **Large text in Inter is narrower**: the engine now applies `font-optical-sizing: auto`, so fonts with an optical-size axis (the bundled Inter Variable) use the cut drawn for that size; 64px semibold "21.5°" is 136px wide instead of 147px. `font-optical-sizing: none` restores the previous rendering. Golden hashes differ from 0.6.0 for text; renders stay byte-identical across platforms.
+- **Large text in Inter is narrower**: the engine now applies `font-optical-sizing: auto`, so fonts with an optical-size axis (the bundled Inter Variable) use the cut drawn for that size; 64px semibold "21.5°" is 136px wide instead of 147px. `font-optical-sizing: none` restores the previous rendering. Golden hashes differ from 0.6.0 for text.
+- **Renders stay byte-identical across platforms.** The new rasterizer snaps glyph positions to CoreGraphics' grid on macOS and to Skia's elsewhere; blitz-py turns that snapping off, so text is positioned continuously everywhere, as before.
 
 ### Added
 - **`text-shadow`** renders: offsets, blur and several shadows.

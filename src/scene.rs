@@ -22,6 +22,13 @@
 //!   here with an isolated clip layer, which vello_cpu places correctly, and
 //!   the filter handed on carries an unbounded region instead.
 //!
+//! - **Per-platform glyph snapping.** anyrender_vello_cpu 0.19 snaps glyph
+//!   origins to CoreGraphics' subpixel grid when built for Apple targets
+//!   and to Skia's quarter pixel elsewhere, so the same document rendered
+//!   differently on macOS. It skips snapping for skewed transforms; glyph
+//!   runs are drawn with a negligible horizontal skew so that text is
+//!   positioned continuously, as it was before, on every platform.
+//!
 //! The colour filters need no guard any more: anyrender_vello_cpu 0.19
 //! converts only the primitives vello_cpu implements (flood, blur, drop
 //! shadow, offset) and drops the rest itself, where 0.18 reached an
@@ -58,6 +65,21 @@ impl<'p, S: PaintScene> EngineScene<'p, S> {
 /// Stands in for "no filter region": far beyond any canvas, so the clip
 /// anyrender_vello_cpu draws from it covers everything even when displaced.
 const UNBOUNDED: Rect = Rect::new(-1e7, -1e7, 1e7, 1e7);
+
+/// Horizontal skew that turns off anyrender_vello_cpu's glyph origin
+/// snapping (`GlyphOriginSnap::new` returns None for any skew): it moves a
+/// glyph at y = 100000 by 1/10000 px. Not vertical skew, which would also
+/// turn off glifo's hinting.
+const NO_SNAP_SKEW: f64 = 1e-9;
+
+/// `transform` with [`NO_SNAP_SKEW`] when it is axis-aligned (the only
+/// transforms anyrender_vello_cpu snaps).
+fn unsnapped(transform: Affine) -> Affine {
+    match transform.as_coeffs() {
+        [a, 0.0, 0.0, d, e, f] => Affine::new([a, 0.0, NO_SNAP_SKEW, d, e, f]),
+        _ => transform,
+    }
+}
 
 /// Whether anyrender_vello_cpu 0.19 hands `filter` to vello_cpu (and so
 /// clips it to its region): its first primitive is one vello_cpu implements
@@ -227,7 +249,7 @@ impl<S: PaintScene> PaintScene for EngineScene<'_, S> {
             style,
             brush,
             brush_alpha,
-            transform,
+            unsnapped(transform),
             glyph_transform,
             glyphs,
             anti_aliasing,
@@ -349,6 +371,69 @@ mod tests {
                 &shadow[40..90]
             );
         }
+    }
+
+    /// Two glyphs of the bundled Inter at 24px, origin `x` on a 40px
+    /// baseline, drawn through [`EngineScene`] or straight to the backend.
+    fn glyph_run(x: f64, through_engine_scene: bool) -> Vec<u8> {
+        fn draw(scene: &mut impl PaintScene, font: &FontData, x: f64) {
+            let glyphs = [
+                Glyph {
+                    id: 44,
+                    x: 0.0,
+                    y: 0.0,
+                },
+                Glyph {
+                    id: 73,
+                    x: 16.0,
+                    y: 0.0,
+                },
+            ];
+            scene.draw_glyphs(
+                font,
+                24.0,
+                false,
+                &[],
+                Vec2::ZERO,
+                Fill::NonZero,
+                Color::from_rgba8(255, 255, 255, 255),
+                1.0,
+                Affine::translate((x, 40.0)),
+                None,
+                glyphs.into_iter(),
+                AntiAliasing::Enabled,
+            );
+        }
+        let font = FontData::new(peniko::Blob::new(Arc::new(crate::DEFAULT_FONT)), 0);
+        render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                if through_engine_scene {
+                    draw(&mut EngineScene::new(scene), &font, x);
+                } else {
+                    draw(scene, &font, x);
+                }
+            },
+            64,
+            64,
+        )
+    }
+
+    /// At whole-pixel origins every platform's snap is the identity, so the
+    /// skew that turns snapping off must change nothing there.
+    #[test]
+    fn unsnapped_glyphs_match_at_whole_pixels() {
+        let direct = glyph_run(10.0, false);
+        assert!(direct.iter().any(|&v| v > 0));
+        assert_eq!(direct, glyph_run(10.0, true));
+    }
+
+    /// Off the pixel grid, glyphs move with their origin. Snapped, 10.1
+    /// lands on 10 on every platform (Skia's nearest 1/4px, CoreGraphics'
+    /// floor to 1/2px at 24ppem).
+    #[test]
+    fn unsnapped_glyphs_follow_fractional_origins() {
+        assert_eq!(glyph_run(10.0, false), glyph_run(10.1, false));
+        assert_ne!(glyph_run(10.0, true), glyph_run(10.1, true));
     }
 
     #[test]
